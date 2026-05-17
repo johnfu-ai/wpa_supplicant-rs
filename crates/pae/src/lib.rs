@@ -70,3 +70,4 @@ pub use mka::{
     common_cipher_suite, AesCmacKdf, Cak, CakEntry, CakStore, CipherSuite, Ckn, Ick, Kdf, Kek,
     MkaState, Rng, Sak, Sci, SystemRng,
 };
+pub use port::PortState;
