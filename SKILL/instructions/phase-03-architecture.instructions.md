@@ -74,6 +74,14 @@ pae → (minimal deps: zeroize, tracing)
 - All architecture issues link to requirements
 - Context map shows bounded context relationships
 
+## Phase Gate Approval
+
+Upon gate check approval, the following post-approval actions are required:
+
+1. Post approval comments on all ADR, ARC-C, and QA-SC GitHub Issues confirming the architecture is approved for detailed design
+2. Add `phase:03-approved` label to all ADR, ARC-C, and QA-SC issues
+3. Record the gate check report in `03-architecture/phase-gate-report.md`
+
 ## Next Phase
 
 Phase 04: Detailed Design (`04-design/`)
