@@ -47,5 +47,6 @@ pub enum PaeError {
 
 // Re-export key types for convenience
 pub use mka::{
-    common_cipher_suite, AesCmacKdf, Cak, CipherSuite, Ckn, Ick, Kdf, Kek, MkaState, Rng, SystemRng,
+    common_cipher_suite, AesCmacKdf, Cak, CakEntry, CakStore, CipherSuite, Ckn, Ick, Kdf, Kek,
+    MkaState, Rng, SystemRng,
 };

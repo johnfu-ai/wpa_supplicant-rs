@@ -1,6 +1,6 @@
 //! MKA key agreement types per IEEE 802.1X-2020, Clause 9.
 //!
-//! Implements: #19 (REQ-F-MKA-001: MKA Key Hierarchy)
+//! Implements: #19 (REQ-F-MKA-001: MKA Key Hierarchy), #27 (REQ-F-MKA-009: CAK Identification)
 //! Architecture: #74 (ADR-SM-002), #76 (ADR-SEC-004), #80 (ADR-KDF-008)
 //!
 //! IMPORTANT: This implementation is based on understanding of IEEE 802.1X-2020.
@@ -92,10 +92,23 @@ pub struct Ckn {
 }
 
 impl Ckn {
-    /// Create a CKN from raw bytes. Per Cl.9.3.
+    /// Maximum CKN length per IEEE 802.1X-2020, Clause 9.3.1.
+    const MAX_LEN: usize = 32;
+
+    /// Create a CKN from raw bytes. Per Cl.9.3.1.
+    ///
+    /// # Errors
+    /// Returns `PaeError::KeyError` if `value` is empty or exceeds 32 bytes.
     pub fn from_bytes(value: Vec<u8>) -> Result<Self, crate::PaeError> {
         if value.is_empty() {
             return Err(crate::PaeError::KeyError("CKN must not be empty".into()));
+        }
+        if value.len() > Self::MAX_LEN {
+            return Err(crate::PaeError::KeyError(format!(
+                "CKN must be at most {} bytes, got {}",
+                Self::MAX_LEN,
+                value.len()
+            )));
         }
         Ok(Self { value })
     }
@@ -103,6 +116,16 @@ impl Ckn {
     /// CKN bytes as a slice.
     pub fn as_bytes(&self) -> &[u8] {
         &self.value
+    }
+
+    /// CKN length in bytes.
+    pub fn len(&self) -> usize {
+        self.value.len()
+    }
+
+    /// Whether the CKN is empty (should not occur after construction).
+    pub fn is_empty(&self) -> bool {
+        self.value.is_empty()
     }
 }
 
@@ -382,6 +405,123 @@ impl Rng for SystemRng {
         let mut mi = [0u8; 12];
         self.fill_bytes(&mut mi)?;
         Ok(mi)
+    }
+}
+
+/// A CAK identified by its CKN — the unit of key selection.
+///
+/// Per IEEE 802.1X-2020, Clause 9.3.1: each CAK is identified by its CKN.
+/// When an MKPDU arrives with a given CKN, the correct CAK-derived keys
+/// (ICK, KEK) are selected by matching against the CKN.
+///
+/// Implements: #27 (REQ-F-MKA-009: CAK Identification)
+pub struct CakEntry {
+    /// The CAK (root key).
+    cak: Cak,
+    /// The CKN identifying this CAK.
+    ckn: Ckn,
+    /// Derived ICK for this CAK/CKN pair.
+    ick: Ick,
+    /// Derived KEK for this CAK/CKN pair.
+    kek: Kek,
+}
+
+impl CakEntry {
+    /// Create a new CakEntry by deriving ICK and KEK from CAK and CKN.
+    ///
+    /// Per IEEE 802.1X-2020, Clause 9.3.1 and 9.6.
+    ///
+    /// # Errors
+    /// Returns `PaeError::CryptoError` if key derivation fails.
+    pub fn new(cak: Cak, ckn: Ckn, kdf: &dyn Kdf) -> Result<Self, crate::PaeError> {
+        let ick = kdf.derive_ick(&cak, &ckn)?;
+        let kek = kdf.derive_kek(&cak, &ckn)?;
+        Ok(Self { cak, ckn, ick, kek })
+    }
+
+    /// The CKN identifying this CAK.
+    pub fn ckn(&self) -> &Ckn {
+        &self.ckn
+    }
+
+    /// The CAK (root key).
+    pub fn cak(&self) -> &Cak {
+        &self.cak
+    }
+
+    /// The ICK derived from this CAK/CKN pair. Per Cl.9.6.
+    pub fn ick(&self) -> &Ick {
+        &self.ick
+    }
+
+    /// The KEK derived from this CAK/CKN pair. Per Cl.9.6.
+    pub fn kek(&self) -> &Kek {
+        &self.kek
+    }
+}
+
+impl std::fmt::Debug for CakEntry {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CakEntry")
+            .field("ckn", &self.ckn)
+            .field("cak", &self.cak)
+            .finish()
+    }
+}
+
+/// CAK store — CKN-based key selection for MKA participants.
+///
+/// Per IEEE 802.1X-2020, Clause 9.3.1: when MKPDUs for different CKNs
+/// are processed, the correct CAK-derived keys must be used for ICV
+/// verification and SAK unwrapping.
+///
+/// Implements: #27 (REQ-F-MKA-009: CAK Identification)
+pub struct CakStore {
+    entries: Vec<CakEntry>,
+}
+
+impl CakStore {
+    /// Create an empty CAK store.
+    pub fn new() -> Self {
+        Self {
+            entries: Vec::new(),
+        }
+    }
+
+    /// Insert a CakEntry. Replaces any existing entry with the same CKN.
+    pub fn insert(&mut self, entry: CakEntry) {
+        if let Some(existing) = self.find_by_ckn_mut(entry.ckn()) {
+            // Replace existing entry — CKN is the unique key
+            *existing = entry;
+        } else {
+            self.entries.push(entry);
+        }
+    }
+
+    /// Find a CakEntry by CKN. Per Cl.9.3.1.
+    pub fn find_by_ckn(&self, ckn: &Ckn) -> Option<&CakEntry> {
+        self.entries.iter().find(|e| e.ckn() == ckn)
+    }
+
+    /// Find a CakEntry by CKN (mutable). Per Cl.9.3.1.
+    fn find_by_ckn_mut(&mut self, ckn: &Ckn) -> Option<&mut CakEntry> {
+        self.entries.iter_mut().find(|e| e.ckn() == ckn)
+    }
+
+    /// Number of entries in the store.
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    /// Whether the store is empty.
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+}
+
+impl Default for CakStore {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -671,5 +811,177 @@ mod tests {
         let mi1 = rng.random_mi().unwrap();
         let mi2 = rng.random_mi().unwrap();
         assert_ne!(mi1, mi2, "Consecutive RNG calls must differ");
+    }
+
+    // --- REQ-F-MKA-009: CAK Identification ---
+
+    /// Verifies: #27 (REQ-F-MKA-009)
+    /// Per IEEE 802.1X-2020, Clause 9.3.1.
+    /// CKN accepts 1 byte (minimum valid length).
+    #[test]
+    fn test_ckn_min_length() {
+        let ckn = Ckn::from_bytes(vec![0x01]);
+        assert!(ckn.is_ok());
+        assert_eq!(ckn.unwrap().len(), 1);
+    }
+
+    /// Verifies: #27 (REQ-F-MKA-009)
+    /// Per IEEE 802.1X-2020, Clause 9.3.1.
+    /// CKN accepts 32 bytes (maximum valid length).
+    #[test]
+    fn test_ckn_max_length() {
+        let ckn = Ckn::from_bytes(vec![0xAA; 32]);
+        assert!(ckn.is_ok());
+        assert_eq!(ckn.unwrap().len(), 32);
+    }
+
+    /// Verifies: #27 (REQ-F-MKA-009)
+    /// Per IEEE 802.1X-2020, Clause 9.3.1.
+    /// CKN rejects values exceeding 32 bytes.
+    #[test]
+    fn test_ckn_rejects_over_max() {
+        let result = Ckn::from_bytes(vec![0x00; 33]);
+        assert!(result.is_err());
+    }
+
+    /// Verifies: #27 (REQ-F-MKA-009)
+    /// CKN len() and is_empty() work correctly.
+    #[test]
+    fn test_ckn_len_and_is_empty() {
+        let ckn = Ckn::from_bytes(vec![0x01; 16]).unwrap();
+        assert_eq!(ckn.len(), 16);
+        assert!(!ckn.is_empty());
+    }
+
+    /// Verifies: #27 (REQ-F-MKA-009)
+    /// Per IEEE 802.1X-2020, Clause 9.3.1.
+    /// CakEntry pairs a CAK with its CKN and derives ICK/KEK.
+    #[test]
+    fn test_cak_entry_derives_keys() {
+        let cak = Cak::from_bytes(&[0x01; 16]).unwrap();
+        let ckn = Ckn::from_bytes(vec![0x02; 16]).unwrap();
+        let kdf = AesCmacKdf;
+        let entry =
+            CakEntry::new(cak, ckn.clone(), &kdf).expect("CakEntry creation should succeed");
+        assert_eq!(entry.ckn().as_bytes(), ckn.as_bytes());
+        assert_eq!(entry.ick().len(), 16);
+        assert_eq!(entry.kek().len(), 16);
+    }
+
+    /// Verifies: #27 (REQ-F-MKA-009)
+    /// CakEntry debug output redacts key material.
+    #[test]
+    fn test_cak_entry_debug_redacted() {
+        let cak = Cak::from_bytes(&[0x01; 16]).unwrap();
+        let ckn = Ckn::from_bytes(vec![0x02; 16]).unwrap();
+        let kdf = AesCmacKdf;
+        let entry = CakEntry::new(cak, ckn, &kdf).unwrap();
+        let debug = format!("{:?}", entry);
+        assert!(debug.contains("REDACTED"));
+    }
+
+    /// Verifies: #27 (REQ-F-MKA-009)
+    /// Per IEEE 802.1X-2020, Clause 9.3.1.
+    /// CakStore finds entries by CKN for key selection.
+    #[test]
+    fn test_cak_store_find_by_ckn() {
+        let cak1 = Cak::from_bytes(&[0x01; 16]).unwrap();
+        let ckn1 = Ckn::from_bytes(vec![0x10; 16]).unwrap();
+        let cak2 = Cak::from_bytes(&[0x02; 16]).unwrap();
+        let ckn2 = Ckn::from_bytes(vec![0x20; 16]).unwrap();
+        let kdf = AesCmacKdf;
+
+        let entry1 = CakEntry::new(cak1, ckn1.clone(), &kdf).unwrap();
+        let entry2 = CakEntry::new(cak2, ckn2.clone(), &kdf).unwrap();
+
+        let mut store = CakStore::new();
+        store.insert(entry1);
+        store.insert(entry2);
+
+        // Find by CKN1 returns entry1's ICK
+        let found = store.find_by_ckn(&ckn1).expect("CKN1 should be found");
+        assert_eq!(found.ckn().as_bytes(), ckn1.as_bytes());
+
+        // Find by CKN2 returns entry2's ICK (different from entry1)
+        let found2 = store.find_by_ckn(&ckn2).expect("CKN2 should be found");
+        assert_eq!(found2.ckn().as_bytes(), ckn2.as_bytes());
+        assert_ne!(found.ick().as_bytes(), found2.ick().as_bytes());
+    }
+
+    /// Verifies: #27 (REQ-F-MKA-009)
+    /// Per IEEE 802.1X-2020, Clause 9.3.1.
+    /// Given MKPDUs for different CKNs, the correct CAK-derived keys
+    /// are used (the core acceptance criterion).
+    #[test]
+    fn test_cak_store_selects_correct_keys_by_ckn() {
+        let cak_a = Cak::from_bytes(&[0xAA; 16]).unwrap();
+        let ckn_a = Ckn::from_bytes(vec![0x0A; 16]).unwrap();
+        let cak_b = Cak::from_bytes(&[0xBB; 16]).unwrap();
+        let ckn_b = Ckn::from_bytes(vec![0x0B; 16]).unwrap();
+        let kdf = AesCmacKdf;
+
+        // Derive keys independently for comparison
+        let ick_a_direct = kdf.derive_ick(&cak_a, &ckn_a).unwrap();
+        let ick_b_direct = kdf.derive_ick(&cak_b, &ckn_b).unwrap();
+
+        let entry_a = CakEntry::new(cak_a, ckn_a.clone(), &kdf).unwrap();
+        let entry_b = CakEntry::new(cak_b, ckn_b.clone(), &kdf).unwrap();
+
+        let mut store = CakStore::new();
+        store.insert(entry_a);
+        store.insert(entry_b);
+
+        // Look up by CKN_A: ICK must match CAK_A's derived ICK
+        let found_a = store.find_by_ckn(&ckn_a).expect("CKN_A should be found");
+        assert_eq!(found_a.ick().as_bytes(), ick_a_direct.as_bytes());
+
+        // Look up by CKN_B: ICK must match CAK_B's derived ICK
+        let found_b = store.find_by_ckn(&ckn_b).expect("CKN_B should be found");
+        assert_eq!(found_b.ick().as_bytes(), ick_b_direct.as_bytes());
+
+        // Cross-verification: different CKNs yield different ICKs
+        assert_ne!(found_a.ick().as_bytes(), found_b.ick().as_bytes());
+    }
+
+    /// Verifies: #27 (REQ-F-MKA-009)
+    /// CakStore returns None for unknown CKN.
+    #[test]
+    fn test_cak_store_unknown_ckn() {
+        let cak = Cak::from_bytes(&[0x01; 16]).unwrap();
+        let ckn = Ckn::from_bytes(vec![0x10; 16]).unwrap();
+        let kdf = AesCmacKdf;
+        let entry = CakEntry::new(cak, ckn, &kdf).unwrap();
+
+        let mut store = CakStore::new();
+        store.insert(entry);
+
+        let unknown_ckn = Ckn::from_bytes(vec![0xFF; 16]).unwrap();
+        assert!(store.find_by_ckn(&unknown_ckn).is_none());
+    }
+
+    /// Verifies: #27 (REQ-F-MKA-009)
+    /// CakStore replaces entry when same CKN is inserted.
+    #[test]
+    fn test_cak_store_replace_same_ckn() {
+        let cak1 = Cak::from_bytes(&[0x01; 16]).unwrap();
+        let cak2 = Cak::from_bytes(&[0x02; 16]).unwrap();
+        let ckn = Ckn::from_bytes(vec![0x10; 16]).unwrap();
+        let kdf = AesCmacKdf;
+
+        let entry1 = CakEntry::new(cak1, ckn.clone(), &kdf).unwrap();
+        let ick1 = entry1.ick().as_bytes().to_vec();
+
+        let mut store = CakStore::new();
+        store.insert(entry1);
+        assert_eq!(store.len(), 1);
+
+        // Insert with same CKN but different CAK
+        let entry2 = CakEntry::new(cak2, ckn.clone(), &kdf).unwrap();
+        store.insert(entry2);
+        assert_eq!(store.len(), 1); // Still 1 entry (replaced)
+
+        let found = store.find_by_ckn(&ckn).unwrap();
+        // ICK should be different (different CAK)
+        assert_ne!(found.ick().as_bytes(), ick1.as_slice());
     }
 }
