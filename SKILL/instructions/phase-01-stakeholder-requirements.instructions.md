@@ -71,6 +71,14 @@ Do not create requirements for:
 - Acceptance criteria defined
 - Traceability IDs assigned (StR-XXX format)
 
+## Phase Gate Approval
+
+Upon gate check approval, the following post-approval actions are required:
+
+1. Post approval comments on all StR GitHub Issues confirming the stakeholder requirement is approved for refinement
+2. Add `phase:01-approved` label to all StR issues
+3. Record the gate check report in `01-stakeholder-requirements/phase-gate-report.md`
+
 ## Next Phase
 
 Phase 02: Requirements Analysis & Specification (`02-requirements/`)

@@ -36,6 +36,25 @@ Validate whether the current phase has met its exit criteria before transitionin
 - [ ] REJECTED — Must complete: [list]
 ```
 
+### Post-Approval Actions (After Gate is APPROVED or CONDITIONAL)
+
+Upon gate approval, formally record the decision on the phase's deliverable issues:
+
+| Phase | Issues to Comment | Comment Content |
+|---|---|---|
+| Phase 01 | All StR issues | `Phase 01 Gate APPROVED — [date]. Stakeholder requirements reviewed and approved for refinement into system requirements.` |
+| Phase 02 | All REQ-F and REQ-NF issues | `Phase 02 Gate APPROVED — [date]. Requirements reviewed and approved for architecture design.` |
+| Phase 03 | All ADR issues | `Phase 03 Gate APPROVED — [date]. Architecture decisions reviewed and approved for detailed design.` |
+| Phase 04 | All ARC-C issues | `Phase 04 Gate APPROVED — [date]. Design components reviewed and approved for implementation.` |
+| Phase 05 | All implementation PRs | `Phase 05 Gate APPROVED — [date]. Implementation reviewed and approved for integration.` |
+| Phase 06 | Integration issues | `Phase 06 Gate APPROVED — [date]. Integration reviewed and approved for verification.` |
+| Phase 07 | All TEST issues | `Phase 07 Gate APPROVED — [date]. V&V complete, approved for transition.` |
+| Phase 08 | Release issues | `Phase 08 Gate APPROVED — [date]. Release approved for deployment.` |
+
+For **CONDITIONAL** approvals, include the conditions in the comment and create follow-up issues for each condition.
+
+After posting comments, add the `phase:0N-approved` label to all issues in the approved phase.
+
 ### Rust-Specific Gate Checks
 
 - Phase 05: `cargo test --workspace` passes, `cargo clippy` clean

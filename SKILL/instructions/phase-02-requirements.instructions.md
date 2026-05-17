@@ -73,6 +73,14 @@ Use IEEE 802.1X-2020 terminology exactly:
 - Ubiquitous language glossary started
 - Traceability validated
 
+## Phase Gate Approval
+
+Upon gate check approval, the following post-approval actions are required:
+
+1. Post approval comments on all REQ-F and REQ-NF GitHub Issues confirming the requirement is approved for architecture design
+2. Add `phase:02-approved` label to all REQ-F and REQ-NF issues
+3. Record the gate check report in `02-requirements/phase-gate-report.md`
+
 ## Next Phase
 
 Phase 03: Architecture Design (`03-architecture/`)
