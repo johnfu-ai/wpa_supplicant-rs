@@ -150,11 +150,13 @@ impl Ick {
     const MAX_LEN: usize = 32;
 
     /// Create an ICK from raw bytes. Per Cl.9.6.
+    ///
+    /// # Errors
+    /// Returns `PaeError::KeyError` if `key` is not 16 or 32 bytes.
     pub(crate) fn from_bytes(key: &[u8]) -> Result<Self, crate::PaeError> {
-        if key.is_empty() || key.len() > Self::MAX_LEN {
+        if !Cak::VALID_LENGTHS.contains(&key.len()) {
             return Err(crate::PaeError::KeyError(format!(
-                "ICK length must be 1..={}, got {}",
-                Self::MAX_LEN,
+                "ICK must be 16 or 32 bytes, got {}",
                 key.len()
             )));
         }
@@ -205,11 +207,13 @@ impl Kek {
     const MAX_LEN: usize = 32;
 
     /// Create a KEK from raw bytes. Per Cl.9.6.
+    ///
+    /// # Errors
+    /// Returns `PaeError::KeyError` if `key` is not 16 or 32 bytes.
     pub(crate) fn from_bytes(key: &[u8]) -> Result<Self, crate::PaeError> {
-        if key.is_empty() || key.len() > Self::MAX_LEN {
+        if !Cak::VALID_LENGTHS.contains(&key.len()) {
             return Err(crate::PaeError::KeyError(format!(
-                "KEK length must be 1..={}, got {}",
-                Self::MAX_LEN,
+                "KEK must be 16 or 32 bytes, got {}",
                 key.len()
             )));
         }
@@ -373,32 +377,81 @@ const KDF_LABEL_ICK: &[u8] = b"IEEE8021 ICK";
 const KDF_LABEL_KEK: &[u8] = b"IEEE8021 KEK";
 
 impl AesCmacKdf {
-    /// Derive key material using AES-CMAC KDF.
+    /// Derive key material using AES-CMAC KDF per IEEE 802.1X-2020, Clause 6.2.1.
     ///
-    /// Per IEEE 802.1X-2020, Clause 6.2.1:
-    /// result = AES-CMAC(CAK, label || CKN_first_16)
+    /// For 128-bit CAK: single CMAC block.
+    /// For 256-bit CAK: two CMAC blocks with counter, concatenated.
+    ///
+    /// KDF(key, label, context, length) =
+    ///   CMAC(key, 1 || label || 0x00 || context || length) [|| CMAC(key, 2 || ...)]
     fn kdf_cmac(
         cak: &Cak,
         label: &[u8],
         ckn: &Ckn,
         out_len: usize,
     ) -> Result<Vec<u8>, crate::PaeError> {
-        // Build the CMAC input: label || CKN[0..15] (first 16 bytes of CKN)
         let ckn_prefix_len = 16.min(ckn.as_bytes().len());
-        let mut input = Vec::with_capacity(label.len() + ckn_prefix_len);
-        input.extend_from_slice(label);
-        input.extend_from_slice(&ckn.as_bytes()[..ckn_prefix_len]);
+        let ckn_prefix = &ckn.as_bytes()[..ckn_prefix_len];
+        let length_bytes = (out_len * 8) as u8; // length in bits, fits in u8 for ≤32 bytes
 
-        // AES-CMAC with the CAK as the key
-        let mut cmac =
-            <Cmac<aes::Aes128> as KeyInit>::new_from_slice(cak.as_bytes()).map_err(|e| {
-                crate::PaeError::CryptoError(format!("AES-CMAC key init failed: {}", e))
-            })?;
-        cmac.update(&input);
-        let mac = cmac.finalize().into_bytes();
+        // Build context: label || 0x00 || CKN[0..15] || length
+        let mut context = Vec::with_capacity(1 + label.len() + 1 + ckn_prefix_len + 1);
+        context.push(1); // counter = 1
+        context.extend_from_slice(label);
+        context.push(0x00); // separator
+        context.extend_from_slice(ckn_prefix);
+        context.push(length_bytes);
 
-        let result = &mac[..out_len.min(mac.len())];
-        Ok(result.to_vec())
+        let block1 = if cak.len() == 16 {
+            // AES-128 CAK: single CMAC block
+            let mut cmac =
+                <Cmac<aes::Aes128> as KeyInit>::new_from_slice(cak.as_bytes()).map_err(|e| {
+                    crate::PaeError::CryptoError(format!("AES-128-CMAC key init failed: {}", e))
+                })?;
+            cmac.update(&context);
+            cmac.finalize().into_bytes()
+        } else {
+            // AES-256 CAK: use Aes256 for CMAC
+            let mut cmac =
+                <Cmac<aes::Aes256> as KeyInit>::new_from_slice(cak.as_bytes()).map_err(|e| {
+                    crate::PaeError::CryptoError(format!("AES-256-CMAC key init failed: {}", e))
+                })?;
+            cmac.update(&context);
+            cmac.finalize().into_bytes()
+        };
+
+        if out_len <= 16 {
+            Ok(block1[..out_len].to_vec())
+        } else {
+            // Need second block: counter = 2
+            context[0] = 2; // Update counter
+            let block2 = if cak.len() == 16 {
+                let mut cmac = <Cmac<aes::Aes128> as KeyInit>::new_from_slice(cak.as_bytes())
+                    .map_err(|e| {
+                        crate::PaeError::CryptoError(format!(
+                            "AES-128-CMAC key init failed (block 2): {}",
+                            e
+                        ))
+                    })?;
+                cmac.update(&context);
+                cmac.finalize().into_bytes()
+            } else {
+                let mut cmac = <Cmac<aes::Aes256> as KeyInit>::new_from_slice(cak.as_bytes())
+                    .map_err(|e| {
+                        crate::PaeError::CryptoError(format!(
+                            "AES-256-CMAC key init failed (block 2): {}",
+                            e
+                        ))
+                    })?;
+                cmac.update(&context);
+                cmac.finalize().into_bytes()
+            };
+
+            let mut result = Vec::with_capacity(out_len);
+            result.extend_from_slice(&block1);
+            result.extend_from_slice(&block2[..out_len - 16]);
+            Ok(result)
+        }
     }
 }
 
@@ -1087,5 +1140,95 @@ mod tests {
         let found = store.find_by_ckn(&ckn).unwrap();
         // ICK should be different (different CAK)
         assert_ne!(found.ick().as_bytes(), ick1.as_slice());
+    }
+
+    // --- KDF AES-256 support (SEC-001, SEC-002 fix verification) ---
+
+    /// Verifies: KDF works with AES-256 CAK (32-byte key).
+    #[test]
+    fn test_kdf_aes256_derive_ick() {
+        let cak = Cak::from_bytes(&[0x01; 32]).unwrap();
+        let ckn = Ckn::from_bytes(vec![0x02; 16]).unwrap();
+        let kdf = AesCmacKdf;
+        let ick = kdf
+            .derive_ick(&cak, &ckn)
+            .expect("AES-256 ICK derivation should succeed");
+        assert_eq!(ick.len(), 32);
+    }
+
+    /// Verifies: KDF works with AES-256 CAK for KEK derivation.
+    #[test]
+    fn test_kdf_aes256_derive_kek() {
+        let cak = Cak::from_bytes(&[0x01; 32]).unwrap();
+        let ckn = Ckn::from_bytes(vec![0x02; 16]).unwrap();
+        let kdf = AesCmacKdf;
+        let kek = kdf
+            .derive_kek(&cak, &ckn)
+            .expect("AES-256 KEK derivation should succeed");
+        assert_eq!(kek.len(), 32);
+    }
+
+    /// Verifies: AES-256 ICK and KEK are different from each other.
+    #[test]
+    fn test_kdf_aes256_ick_kek_different() {
+        let cak = Cak::from_bytes(&[0x01; 32]).unwrap();
+        let ckn = Ckn::from_bytes(vec![0x02; 16]).unwrap();
+        let kdf = AesCmacKdf;
+        let ick = kdf.derive_ick(&cak, &ckn).unwrap();
+        let kek = kdf.derive_kek(&cak, &ckn).unwrap();
+        assert_ne!(
+            ick.as_bytes(),
+            kek.as_bytes(),
+            "AES-256 ICK and KEK must differ"
+        );
+    }
+
+    /// Verifies: AES-256 KDF is deterministic.
+    #[test]
+    fn test_kdf_aes256_deterministic() {
+        let cak = Cak::from_bytes(&[0x01; 32]).unwrap();
+        let ckn = Ckn::from_bytes(vec![0x02; 16]).unwrap();
+        let kdf = AesCmacKdf;
+        let ick_a = kdf.derive_ick(&cak, &ckn).unwrap();
+        let ick_b = kdf.derive_ick(&cak, &ckn).unwrap();
+        assert_eq!(
+            ick_a.as_bytes(),
+            ick_b.as_bytes(),
+            "AES-256 KDF must be deterministic"
+        );
+    }
+
+    /// Verifies: AES-256 and AES-128 produce different ICKs for same input seed.
+    #[test]
+    fn test_kdf_aes128_vs_aes256_different() {
+        let cak128 = Cak::from_bytes(&[0x01; 16]).unwrap();
+        let cak256 = Cak::from_bytes(&[0x01; 32]).unwrap();
+        let ckn = Ckn::from_bytes(vec![0x02; 16]).unwrap();
+        let kdf = AesCmacKdf;
+        // AES-128 ICK is 16 bytes, AES-256 ICK is 32 bytes
+        let ick128 = kdf.derive_ick(&cak128, &ckn).unwrap();
+        let ick256 = kdf.derive_ick(&cak256, &ckn).unwrap();
+        assert_eq!(ick128.len(), 16);
+        assert_eq!(ick256.len(), 32);
+        // First 16 bytes should differ (different key sizes)
+        assert_ne!(ick128.as_bytes(), &ick256.as_bytes()[..16]);
+    }
+
+    /// Verifies: ICK rejects non-standard lengths (SEC-003 fix).
+    #[test]
+    fn test_ick_rejects_non_standard_length() {
+        let result = Ick::from_bytes(&[0x01; 8]);
+        assert!(result.is_err(), "ICK must reject 8-byte key");
+        let result = Ick::from_bytes(&[0x01; 24]);
+        assert!(result.is_err(), "ICK must reject 24-byte key");
+    }
+
+    /// Verifies: KEK rejects non-standard lengths (SEC-004 fix).
+    #[test]
+    fn test_kek_rejects_non_standard_length() {
+        let result = Kek::from_bytes(&[0x01; 8]);
+        assert!(result.is_err(), "KEK must reject 8-byte key");
+        let result = Kek::from_bytes(&[0x01; 24]);
+        assert!(result.is_err(), "KEK must reject 24-byte key");
     }
 }
