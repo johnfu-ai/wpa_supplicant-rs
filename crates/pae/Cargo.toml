@@ -1,0 +1,16 @@
+[package]
+name = "pae"
+description = "PAE, MKA, and CP state machines per IEEE 802.1X-2020 Clauses 9-10"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+tracing.workspace = true
+thiserror.workspace = true
+zeroize.workspace = true
+
+[features]
+default = []
+macsec = []

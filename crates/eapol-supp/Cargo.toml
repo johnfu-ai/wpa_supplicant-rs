@@ -1,0 +1,16 @@
+[package]
+name = "eapol-supp"
+description = "Supplicant EAPOL state machine per IEEE 802.1X-2020 Clause 8"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+pae = { path = "../pae" }
+tracing.workspace = true
+thiserror.workspace = true
+zeroize.workspace = true
+
+[features]
+default = []

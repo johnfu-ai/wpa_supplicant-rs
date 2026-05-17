@@ -1,0 +1,20 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/eapol-supp",
+    "crates/eap-peer",
+    "crates/pae",
+    "crates/logon",
+    "crates/wpa-supplicant",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "BSD-3-Clause"
+rust-version = "1.75"
+
+[workspace.dependencies]
+tracing = "0.1"
+thiserror = "2"
+zeroize = { version = "1", features = ["derive"] }

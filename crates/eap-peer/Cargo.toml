@@ -1,0 +1,18 @@
+[package]
+name = "eap-peer"
+description = "EAP peer methods (TLS, PEAP, TEAP) for the IEEE 802.1X-2020 supplicant"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+pae = { path = "../pae" }
+tracing.workspace = true
+thiserror.workspace = true
+
+[features]
+default = ["eap-tls"]
+eap-tls = []
+eap-peap = []
+eap-teap = []

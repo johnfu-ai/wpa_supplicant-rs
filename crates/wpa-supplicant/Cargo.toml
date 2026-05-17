@@ -1,0 +1,18 @@
+[package]
+name = "wpa-supplicant"
+description = "IEEE 802.1X-2020 supplicant binary"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+pae = { path = "../pae" }
+eapol-supp = { path = "../eapol-supp" }
+eap-peer = { path = "../eap-peer" }
+logon = { path = "../logon" }
+tracing.workspace = true
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[features]
+default = []
