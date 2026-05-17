@@ -102,8 +102,8 @@ The Supplicant PAE shall transmit an EAPOL-Logoff per Clause 8.5 when transition
 
 ### Acceptance Criteria
 
-- **Given** the Supplicant PAE transitions to LOGOFF, **When** connectivity is not secured by MACsec or MKA, **Then** `txEapolLogoff()` transmits an EAPOL-Logoff frame
-- **Given** the Supplicant PAE transitions to LOGOFF, **When** connectivity is secured by MACsec or MKA, **Then** `txEapolLogoff()` may return without transmitting
+- **Given** the Supplicant PAE transitions to LOGOFF, **When** connectivity is not secured by MACsec or MKA, **Then** `txEapolLogoff()` shall transmit an EAPOL-Logoff frame
+- **Given** the Supplicant PAE transitions to LOGOFF, **When** connectivity is secured by MACsec or MKA, **Then** `txEapolLogoff()` may omit EAPOL-Logoff transmission (optional per Clause 8.5)
 
 ### Verification Method
 

@@ -10,7 +10,7 @@ Traceability: StR-006 (#6), StR-007 (#7), StR-008 (#8), StR-009 (#9)
 The supplicant shall transmit MKPDUs within MKA Hello Time (2.0s) for active participants, and MKA Bounded Hello Time (0.5s) when bounded receive delay is required.
 
 **Traces to**: StR-002 (#2)
-**Verification**: Timer measurement in unit test; 95th percentile ≤ 2.0s / 0.5s
+**Verification**: Timer architecture validated by code review (deterministic timer wheel, no unbounded operations in timer path). Empirical timing validated on target hardware (not under CI scheduler load). 95th percentile ≤ 2.0s / 0.5s on dedicated test runner.
 
 ### REQ-NF-PERF-002: MKA Life Time
 
@@ -21,7 +21,7 @@ Peer list entries shall be removed within MKA Life Time (6.0s) + MKA Hello Time 
 
 ### REQ-NF-PERF-003: EAPOL Response Latency
 
-The supplicant shall respond to received EAPOL-EAP frames within 100ms at the 95th percentile under normal load.
+The supplicant shall respond to received EAPOL-EAP frames within 100ms at the 95th percentile.
 
 **Traces to**: StR-001 (#1)
 **Verification**: Latency measurement in integration test
@@ -91,7 +91,7 @@ State machine errors shall be propagated via `Result` types and logged at approp
 The supplicant shall re-establish EAP authentication and MKA session within 10 seconds of link restoration, assuming the authenticator is available.
 
 **Traces to**: StR-010 (#10)
-**Verification**: Integration test: link flap recovery timing
+**Verification**: Integration test in Linux network namespace with veth pair; link flap simulated via `ip link set down/up`; timing measured from link-up to Controlled Port SECURE
 
 ## Portability
 
@@ -108,6 +108,43 @@ Core protocol logic (state machines, key derivation) shall be compilable with `#
 
 **Traces to**: StR-009 (#9)
 **Verification**: `cargo build -p pae --no-default-features` succeeds
+
+## Deployment
+
+### REQ-NF-DEPLOY-001: Structured Logging
+
+The supplicant daemon shall use the `tracing` crate for structured logging with runtime level control (trace/debug/info/warn/error) configurable without restart.
+
+**Traces to**: StR-007 (#7)
+**Verification**: Integration test: change log level at runtime and verify output
+
+### REQ-NF-DEPLOY-002: Graceful Shutdown
+
+The supplicant daemon shall handle SIGTERM and SIGINT by completing in-flight operations, closing connections, and exiting within 5 seconds.
+
+**Traces to**: StR-007 (#7)
+**Verification**: Integration test: send SIGTERM, verify clean exit within 5s
+
+### REQ-NF-DEPLOY-003: Configuration File Support
+
+The supplicant daemon shall load configuration from a TOML file, supporting network profiles, EAP credentials, and MKA parameters.
+
+**Traces to**: StR-007 (#7)
+**Verification**: Integration test: load config file, verify parameters applied
+
+### REQ-NF-DEPLOY-004: systemd Integration
+
+The supplicant daemon shall provide a systemd unit file and support socket activation for on-demand startup.
+
+**Traces to**: StR-007 (#7)
+**Verification**: Integration test: systemd-run with unit file, verify startup
+
+### REQ-NF-DEPLOY-005: Control Interface
+
+The supplicant daemon shall expose a D-Bus or Unix domain socket control interface for runtime management, operable without root privileges.
+
+**Traces to**: StR-007 (#7)
+**Verification**: Integration test: connect to control interface as non-root user, issue commands
 
 ## Maintainability
 

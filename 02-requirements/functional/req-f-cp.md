@@ -5,15 +5,15 @@ Traceability: StR-003 (#3)
 
 ## REQ-F-CP-001: CP State Machine
 
-The supplicant shall implement the CP state machine per Clause 12.4, managing Controlled Port connectivity based on authentication and MKA status.
+The supplicant shall implement the CP state machine per Clause 12.4, managing Controlled Port connectivity based on authentication and MKA status. The CP state machine shall support states: SECURE, UNSECURE, and DISABLED, transitioning based on MKA principal actor status.
 
 **Traces to**: StR-003 (#3)
 
 ### Acceptance Criteria
 
-- **Given** authentication succeeds and MKA establishes secured connectivity, **When** the CP state machine enables `controlledPortEnabled`, **Then** the Controlled Port is MAC_Operational
-- **Given** MKA fails, **When** the CP state machine determines connectivity cannot be maintained, **Then** `controlledPortEnabled` is cleared and the Controlled Port becomes MAC_Operational = FALSE
-- **Given** authentication succeeds without MACsec, **When** the Logon Process authorizes unsecured connectivity, **Then** `controlledPortEnabled` is set without MACsec protection
+- **Given** authentication succeeds and MKA establishes secured connectivity, **When** the CP state machine transitions to SECURE and enables `controlledPortEnabled`, **Then** the Controlled Port is MAC_Operational
+- **Given** MKA fails, **When** the CP state machine transitions to DISABLED, **Then** `controlledPortEnabled` is cleared and the Controlled Port becomes MAC_Operational = FALSE
+- **Given** authentication succeeds without MACsec, **When** the CP state machine transitions to UNSECURE and the Logon Process authorizes unsecured connectivity, **Then** `controlledPortEnabled` is set without MACsec protection
 
 ### Verification Method
 

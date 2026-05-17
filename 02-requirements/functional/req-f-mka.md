@@ -64,6 +64,7 @@ The MKA supplicant shall participate in Key Server election per Clause 9.5, usin
 
 - **Given** multiple participants in a CA, **When** each advertises its Key Server Priority, **Then** the participant with the highest priority (lowest value) is elected Key Server
 - **Given** the actor's priority is higher than all peers, **When** election completes, **Then** the actor becomes Key Server
+- **Given** a peer has higher priority than the actor, **When** election completes, **Then** the actor accepts the peer as Key Server and follows its directives (SAK distribution, cipher suite selection)
 
 ### Verification Method
 

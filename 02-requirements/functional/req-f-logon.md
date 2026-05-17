@@ -14,7 +14,7 @@ The supplicant shall implement the Logon Process per Clause 12.5, controlling wh
 - **Given** the Logon Process is in an unauthenticated state, **When** the port becomes MAC_Operational, **Then** the Logon Process instructs the PAE to authenticate
 - **Given** authentication succeeds, **When** MKA establishes connectivity, **Then** the Logon Process instructs the CP state machine to enable the Controlled Port
 - **Given** authentication fails and PSK fallback is configured, **When** EAP fails, **Then** the Logon Process attempts PSK-based MKA
-- **Given** MKA fails after secured connectivity was established, **When** the CP state machine reports failure, **Then** the Logon Process may attempt reauthentication
+- **Given** MKA fails after secured connectivity was established, **When** the CP state machine reports failure and the `authenticate` variable is still set, **Then** the Logon Process shall attempt reauthentication
 
 ### Verification Method
 
