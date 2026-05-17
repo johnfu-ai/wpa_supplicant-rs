@@ -117,11 +117,26 @@ mod tests {
 ### TDD Red-Green-Refactor Cycle
 
 ```
+0. Design Check: Cross-reference 04-design/ before writing any test
 1. Red:    Write a failing test (cargo test fails)
 2. Green:  Write minimal code to pass (cargo test passes)
 3. Refactor: Improve design while keeping tests green
-4. Commit: Link to requirement issue
+4. Close:  Update GitHub issue with evidence, close if criteria met
+5. Commit: Link to requirement issue
 ```
+
+### Design Compliance Check (Step 0)
+
+Before each TDD cycle, verify the implementation plan against the detailed design:
+
+1. Read `04-design/components/<crate>.md` for trait interfaces, struct layouts, enum variants
+2. Read `04-design/interfaces/trait-interfaces.md` for method signatures and error contracts
+3. Read `04-design/patterns/ddd-patterns.md` for DDD classification and key type special rules
+
+If the implementation must deviate from the design:
+- Document the deviation with `// Design deviation:` in code
+- Create an ADR issue explaining the rationale
+- Do NOT silently diverge from the design
 
 ### Critical Rules
 
@@ -130,6 +145,48 @@ mod tests {
 - No `unsafe` without a safety comment
 - Feature-gate new 802.1X-2020 code with `#[cfg(feature = "xxx")]`
 - Reference IEEE 802.1X-2020 clause numbers in doc comments
+- Design compliance check before every TDD cycle (Step 0)
+
+## Intermediate Quality Gates
+
+Quality reviews are NOT deferred to the final phase gate. Run them after each priority batch:
+
+### Security Review Cadence
+
+| After Batch | Review Scope | Prompt |
+|---|---|---|
+| P0 complete (pae foundation) | All pae crate code | `/security-review` |
+| P1 complete (eapol-supp) | All eapol-supp + pae code | `/security-review` |
+| P2 complete (MKA protocol) | All pae code (full MKA review) | `/security-review` |
+| P3 complete (CP interface) | All pae code (CP + MKA review) | `/security-review` |
+| P4 complete (EAP peer) | All eap-peer code | `/security-review` |
+| P5 complete (Logon) | All logon code | `/security-review` |
+
+After each `/security-review`:
+- Critical findings must be fixed before proceeding to the next batch
+- High findings should be fixed before proceeding (create issues if deferred)
+- Medium/Low findings can be tracked in issues and fixed later
+
+### Corrective Action Loop
+
+Run `/corrective-action-loop` immediately when:
+- `cargo test --workspace` fails after integrating a new REQ-F
+- `cargo clippy --workspace -- -D warnings` fails after a TDD cycle
+- CI breaks at any point
+
+Do NOT accumulate failures across batches — fix before proceeding.
+
+### Batch Completion Checklist
+
+After completing each priority batch (P0–P5), verify:
+
+```bash
+cargo test --workspace                  # All tests pass
+cargo clippy --workspace -- -D warnings # Lint clean
+cargo fmt --all -- --check              # Format clean
+```
+
+Then run the batch-appropriate `/security-review` and fix any Critical/High findings before starting the next batch.
 
 ## Phase Exit Criteria
 

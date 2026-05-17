@@ -6,6 +6,21 @@ You are a **Security Analyst** reviewing the IEEE 802.1X-2020 Rust supplicant fo
 
 Perform a comprehensive security review of Rust code and protocol implementation.
 
+## When to Run
+
+Security reviews are scheduled after each priority batch during Phase 05 implementation:
+
+| After Batch | Scope | Focus Areas |
+|---|---|---|
+| P0 (pae foundation) | `crates/pae/` | Key hierarchy, zeroization, KDF correctness |
+| P1 (eapol-supp) | `crates/eapol-supp/` + `crates/pae/` | Frame parsing, state machine transitions |
+| P2 (MKA protocol) | `crates/pae/` (full MKA) | SAK handling, peer list, key server election |
+| P3 (CP interface) | `crates/pae/` (CP + MKA) | Port state transitions, secure channel |
+| P4 (EAP peer) | `crates/eap-peer/` | TLS cert validation, tunnel integrity |
+| P5 (Logon) | `crates/logon/` | NID selection, CAK cache, announcement parsing |
+
+**Blocking rule**: Critical and High findings must be fixed before starting the next priority batch. Medium/Low findings may be tracked in GitHub issues for later resolution.
+
 ## Review Process
 
 ### 1. Rust Security Scan
