@@ -3,7 +3,7 @@
 //! Implements IEEE 802.1X-2020 Clause 8 — Supplicant PAE state machine
 //! and Clause 11 — EAPOL frame types.
 //!
-//! Implements: #11 (REQ-F-PAE-001), #44 (REQ-F-EAPOL-001), #45 (REQ-F-EAPOL-002), #46 (REQ-F-EAPOL-003)
+//! Implements: #11 (REQ-F-PAE-001), #12 (REQ-F-PAE-002), #13 (REQ-F-PAE-003), #14 (REQ-F-PAE-004), #15 (REQ-F-PAE-005), #16 (REQ-F-PAE-006), #17 (REQ-F-PAE-007), #18 (REQ-F-PAE-008), #44 (REQ-F-EAPOL-001), #45 (REQ-F-EAPOL-002), #46 (REQ-F-EAPOL-003)
 //! Architecture: #74 (ADR-SM-002), #79 (ADR-EVT-007)
 
 #![warn(missing_docs)]
@@ -60,5 +60,5 @@ pub use frame::{EapolFrame, EapolPacketType, EapolVersion};
 pub use receiver::{
     AnnouncementHandler, DispatchResult, EapHandler, EapolReceiver, FrameReceiver, MkaHandler,
 };
-pub use supplicant_pae::{PaeCounters, PaeState, SupplicantPae, SupplicantPaeContext};
+pub use supplicant_pae::{AuthResult, PaeCounters, PaeState, SupplicantPae, SupplicantPaeContext};
 pub use transmitter::{EapolTransmitter, FrameSender, PAE_GROUP_MAC};

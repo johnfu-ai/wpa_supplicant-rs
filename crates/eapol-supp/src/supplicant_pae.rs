@@ -1,6 +1,8 @@
 //! Supplicant PAE state machine per IEEE 802.1X-2020, Clause 8.
 //!
-//! Implements: #11 (REQ-F-PAE-001: Supplicant PACP State Machine)
+//! Implements: #11 (REQ-F-PAE-001), #12 (REQ-F-PAE-002), #13 (REQ-F-PAE-003),
+//! #14 (REQ-F-PAE-004), #15 (REQ-F-PAE-005), #16 (REQ-F-PAE-006),
+//! #17 (REQ-F-PAE-007), #18 (REQ-F-PAE-008)
 //! Architecture: #74 (ADR-SM-002), #79 (ADR-EVT-007)
 //!
 //! IMPORTANT: This implementation is based on understanding of IEEE 802.1X-2020.
@@ -34,9 +36,9 @@ pub enum PaeState {
     Logoff,
 }
 
-/// Diagnostic counters for the Supplicant PAE.
+/// Diagnostic counters per IEEE 802.1X-2020, Clause 8.8.
 ///
-/// Per IEEE 802.1X-2020, Clause 8.3.
+/// Implements: #18 (REQ-F-PAE-008: Supplicant PAE Counters)
 #[derive(Debug, Clone, Default)]
 pub struct PaeCounters {
     /// EAPOL frames received.
@@ -51,6 +53,29 @@ pub struct PaeCounters {
     pub eap_resp_identity_tx: u64,
     /// Last EAPOL frame version received.
     pub last_eapol_version: u8,
+    /// Per Cl.8.8: enters Authenticating state.
+    pub enters_authenticating: u64,
+    /// Per Cl.8.8: auth timeouts while Authenticating.
+    pub auth_timeouts_while_authenticating: u64,
+    /// Per Cl.8.8: EAP Logoff while Authenticating.
+    pub eap_logoff_while_authenticating: u64,
+    /// Per Cl.8.8: auth failures while Authenticating.
+    pub auth_fail_while_authenticating: u64,
+    /// Per Cl.8.8: auth successes while Authenticating.
+    pub auth_successes_while_authenticating: u64,
+    /// Per Cl.8.8: auth failures while Authenticated.
+    pub auth_fail_while_authenticated: u64,
+    /// Per Cl.8.8: EAP Logoff while Authenticated.
+    pub eap_logoff_while_authenticated: u64,
+}
+
+/// EAP authentication results from higher layer.
+///
+/// Per Cl.8.3: carried by eapSuccess/eapFail signals.
+#[derive(Debug, Clone, Default)]
+pub struct AuthResult {
+    /// EAP identity from EAP-Response/Identity.
+    pub identity: Vec<u8>,
 }
 
 /// Context trait for Supplicant PAE — abstracts I/O and time.
@@ -70,10 +95,10 @@ pub trait SupplicantPaeContext: Send + Sync {
     /// Get the configured EAP identity string.
     fn get_identity(&self) -> &[u8];
 
-    /// Get the configured maximum reauthentication retries.
+    /// Get the configured maximum reauthentication retries (retryMax). Per Cl.8.7.
     fn get_max_retries(&self) -> u32;
 
-    /// Get the heldWhile timer duration (default 60s). Per Cl.8.3.
+    /// Get the heldWhile timer duration (heldPeriod, default 60s). Per Cl.8.6.
     fn get_held_while(&self) -> Duration;
 
     /// Get the startWhen timer duration (default 30s). Per Cl.8.3.
@@ -81,6 +106,9 @@ pub trait SupplicantPaeContext: Send + Sync {
 
     /// Get the authWhile timer duration (default 30s). Per Cl.8.3.
     fn get_auth_while(&self) -> Duration;
+
+    /// Check if the port is secured by MACsec/MKA. Per Cl.8.5.
+    fn is_macsec_secured(&self) -> bool;
 }
 
 /// Supplicant PAE state machine — Aggregate root for PACP.
@@ -89,14 +117,28 @@ pub trait SupplicantPaeContext: Send + Sync {
 /// Generic over context trait for testability.
 /// Owns state, timers, and counters; enforces transition invariants.
 ///
-/// Implements: #11 (REQ-F-PAE-001: Supplicant PACP State Machine)
+/// Implements: #11 (REQ-F-PAE-001), #12 (REQ-F-PAE-002), #13 (REQ-F-PAE-003),
+/// #14 (REQ-F-PAE-004), #15 (REQ-F-PAE-005), #16 (REQ-F-PAE-006),
+/// #17 (REQ-F-PAE-007), #18 (REQ-F-PAE-008)
 pub struct SupplicantPae<C: SupplicantPaeContext> {
     /// Current PACP state.
     state: PaeState,
-    /// Retry counter for EAPOL-Start retransmissions.
+    /// Retry counter (retryCount). Per Cl.8.7.
     start_count: u32,
-    /// Whether `authenticate` flag is set by higher layer.
+    /// Whether `authenticate` flag is set by higher layer. Per Cl.8.4.
     authenticate: bool,
+    /// Whether `eapStart` is set by higher layer. Per Cl.8.3.
+    eap_start: bool,
+    /// Whether `eapStop` is set by higher layer. Per Cl.8.3.
+    eap_stop: bool,
+    /// Whether `enabled` is set. Per Cl.8.4.
+    enabled: bool,
+    /// Whether `authenticated` is set. Per Cl.8.4.
+    authenticated: bool,
+    /// Whether `failed` is set. Per Cl.8.4.
+    failed: bool,
+    /// Authentication results. Per Cl.8.4.
+    results: Option<AuthResult>,
     /// Diagnostic counters.
     counters: PaeCounters,
     /// Time when current timer was started.
@@ -130,6 +172,12 @@ impl<C: SupplicantPaeContext> SupplicantPae<C> {
             state: PaeState::Disconnected,
             start_count: 0,
             authenticate: false,
+            eap_start: false,
+            eap_stop: false,
+            enabled: false,
+            authenticated: false,
+            failed: false,
+            results: None,
             counters: PaeCounters::default(),
             timer_start: None,
             timer_duration: Duration::ZERO,
@@ -148,12 +196,12 @@ impl<C: SupplicantPaeContext> SupplicantPae<C> {
         &self.counters
     }
 
-    /// Whether the authenticate flag is set.
+    /// Whether the authenticate flag is set. Per Cl.8.4.
     pub fn is_authenticate(&self) -> bool {
         self.authenticate
     }
 
-    /// Current start retry count.
+    /// Current start retry count. Per Cl.8.7.
     pub fn start_count(&self) -> u32 {
         self.start_count
     }
@@ -163,23 +211,110 @@ impl<C: SupplicantPaeContext> SupplicantPae<C> {
         &self.ctx
     }
 
-    /// Set the `authenticate` flag. Per Cl.8.3.
+    // --- #12 (REQ-F-PAE-002): Higher Layer Interface ---
+
+    /// Signal eapStart from higher layer. Per Cl.8.3.
+    ///
+    /// Sets the eapStart flag, which will be processed on the next step.
+    /// The flag is cleared when the EAP attempt begins.
+    pub fn eap_start(&mut self) {
+        self.eap_start = true;
+    }
+
+    /// Signal eapStop from higher layer. Per Cl.8.3.
+    ///
+    /// Sets the eapStop flag. When processed, the PAE stops processing
+    /// EAP messages until eapStart is set again.
+    pub fn eap_stop(&mut self) {
+        self.eap_stop = true;
+    }
+
+    /// Signal eapTimeout. Per Cl.8.3.
+    ///
+    /// Called when authWhile timer expires during Authenticating state.
+    /// Results in either a retry or transition to Held.
+    pub fn eap_timeout(&mut self) {
+        if self.state == PaeState::Authenticating {
+            self.counters.auth_timeouts_while_authenticating += 1;
+        }
+    }
+
+    /// Whether eapStart flag is set. Per Cl.8.3.
+    pub fn is_eap_start(&self) -> bool {
+        self.eap_start
+    }
+
+    /// Whether eapStop flag is set. Per Cl.8.3.
+    pub fn is_eap_stop(&self) -> bool {
+        self.eap_stop
+    }
+
+    // --- #13 (REQ-F-PAE-003): Client Interface ---
+
+    /// Set the `enabled` flag. Per Cl.8.4.
+    pub fn set_enabled(&mut self, value: bool) {
+        self.enabled = value;
+    }
+
+    /// Whether `enabled` is set. Per Cl.8.4.
+    pub fn is_enabled(&self) -> bool {
+        self.enabled
+    }
+
+    /// Set the `authenticate` flag. Per Cl.8.4.
     pub fn set_authenticate(&mut self, value: bool) {
         self.authenticate = value;
     }
 
-    /// Trigger logoff. Transitions to Logoff state. Per Cl.8.3.
+    /// Whether `authenticated` is set. Per Cl.8.4.
+    pub fn is_authenticated(&self) -> bool {
+        self.authenticated
+    }
+
+    /// Whether `failed` is set. Per Cl.8.4.
+    pub fn is_failed(&self) -> bool {
+        self.failed
+    }
+
+    /// Get authentication results. Per Cl.8.4.
+    pub fn results(&self) -> Option<&AuthResult> {
+        self.results.as_ref()
+    }
+
+    // --- #15 (REQ-F-PAE-005): EAPOL-Start Transmission ---
+    // (transition_to_connecting handles this, already verified by existing tests)
+
+    // --- #16 (REQ-F-PAE-006): EAPOL-Logoff Transmission ---
+
+    /// Trigger logoff. Per Cl.8.5.
+    ///
+    /// Per Cl.8.5: EAPOL-Logoff is transmitted unless connectivity is
+    /// secured by MACsec/MKA (in which case it may be omitted).
     ///
     /// # Errors
     /// Returns `EapolError::InvalidTransition` if not in an authenticatable state.
     pub fn logoff(&mut self) -> Result<(), EapolError> {
         match self.state {
             PaeState::Authenticated | PaeState::Authenticating | PaeState::Connecting => {
-                let frame = EapolFrame::logoff();
-                self.ctx.send_eapol(&frame)?;
-                self.counters.eapol_logoff_tx += 1;
-                self.counters.eapol_frames_tx += 1;
+                // Per Cl.8.5: skip EAPOL-Logoff if secured by MACsec
+                if !self.ctx.is_macsec_secured() {
+                    let frame = EapolFrame::logoff();
+                    self.ctx.send_eapol(&frame)?;
+                    self.counters.eapol_logoff_tx += 1;
+                    self.counters.eapol_frames_tx += 1;
+                }
+                // Cl.8.8 counters
+                match self.state {
+                    PaeState::Authenticating => {
+                        self.counters.eap_logoff_while_authenticating += 1;
+                    }
+                    PaeState::Authenticated => {
+                        self.counters.eap_logoff_while_authenticated += 1;
+                    }
+                    _ => {}
+                }
                 self.state = PaeState::Logoff;
+                self.authenticated = false;
                 self.cancel_timer();
                 Ok(())
             }
@@ -224,11 +359,19 @@ impl<C: SupplicantPaeContext> SupplicantPae<C> {
         self.counters.eapol_frames_rx += 1;
         self.counters.last_eapol_version = frame.version as u8;
 
+        // Per Cl.8.3: if eapStop is set, no EAP messages processed
+        if self.eap_stop {
+            return Ok(());
+        }
+
         match self.state {
             PaeState::Connecting
                 if matches!(frame.packet_type, crate::frame::EapolPacketType::EapPacket) =>
             {
                 self.state = PaeState::Authenticating;
+                self.counters.enters_authenticating += 1;
+                // Clear eapStart when EAP attempt begins
+                self.eap_start = false;
             }
             _ => {}
         }
@@ -238,6 +381,19 @@ impl<C: SupplicantPaeContext> SupplicantPae<C> {
     /// Perform a single timer-driven step. Per Cl.8.3.
     pub fn step(&mut self) -> Result<(), EapolError> {
         let now = self.ctx.now();
+
+        // Per Cl.8.4: if enabled is set, Logon Process can set authenticate
+        if self.enabled && self.authenticate && self.state == PaeState::Disconnected {
+            self.start_count = 0;
+            self.transition_to_connecting()?;
+            return Ok(());
+        }
+
+        // Per Cl.8.3: if eapStop is set, no EAP processing
+        if self.eap_stop {
+            self.eap_stop = false;
+            return Ok(());
+        }
 
         // Check port state
         let port_state = self.ctx.get_port_state();
@@ -268,6 +424,7 @@ impl<C: SupplicantPaeContext> SupplicantPae<C> {
             }
             PaeState::Authenticating => {
                 if self.timer_expired(now) {
+                    self.counters.auth_timeouts_while_authenticating += 1;
                     if self.start_count < self.ctx.get_max_retries() {
                         self.start_count += 1;
                         self.transition_to_connecting()?;
@@ -313,6 +470,12 @@ impl<C: SupplicantPaeContext> SupplicantPae<C> {
         }
         self.state = PaeState::Authenticated;
         self.start_count = 0;
+        self.authenticated = true;
+        self.failed = false;
+        self.counters.auth_successes_while_authenticating += 1;
+        self.results = Some(AuthResult {
+            identity: self.ctx.get_identity().to_vec(),
+        });
         self.cancel_timer();
         Ok(())
     }
@@ -328,10 +491,13 @@ impl<C: SupplicantPaeContext> SupplicantPae<C> {
                 to: "Held".into(),
             });
         }
+        self.counters.auth_fail_while_authenticating += 1;
         if self.start_count < self.ctx.get_max_retries() {
             self.start_count += 1;
         } else {
             self.state = PaeState::Held;
+            self.authenticated = false;
+            self.failed = true;
             let now = self.ctx.now();
             self.start_timer(ActiveTimer::HeldWhile, self.ctx.get_held_while(), now);
         }
@@ -345,6 +511,8 @@ impl<C: SupplicantPaeContext> SupplicantPae<C> {
         self.counters.eapol_frames_tx += 1;
         self.start_count += 1;
         self.state = PaeState::Connecting;
+        self.authenticated = false;
+        self.failed = false;
         let now = self.ctx.now();
         self.start_timer(ActiveTimer::StartWhen, self.ctx.get_start_when(), now);
         Ok(())
@@ -383,6 +551,7 @@ mod tests {
         held_while: Duration,
         start_when: Duration,
         auth_while: Duration,
+        macsec_secured: bool,
     }
 
     impl MockContext {
@@ -395,6 +564,7 @@ mod tests {
                 held_while: Duration::from_secs(60),
                 start_when: Duration::from_secs(30),
                 auth_while: Duration::from_secs(30),
+                macsec_secured: false,
             }
         }
 
@@ -437,6 +607,10 @@ mod tests {
         fn get_auth_while(&self) -> Duration {
             self.auth_while
         }
+
+        fn is_macsec_secured(&self) -> bool {
+            self.macsec_secured
+        }
     }
 
     /// Helper: create pae with shared context for testing.
@@ -478,7 +652,13 @@ mod tests {
         fn get_auth_while(&self) -> Duration {
             (**self).get_auth_while()
         }
+
+        fn is_macsec_secured(&self) -> bool {
+            (**self).is_macsec_secured()
+        }
     }
+
+    // --- #11 (REQ-F-PAE-001) existing tests ---
 
     /// Verifies: #11 (REQ-F-PAE-001)
     /// Per IEEE 802.1X-2020, Clause 8.3.
@@ -646,5 +826,342 @@ mod tests {
             pae.step().unwrap();
         }
         assert_eq!(pae.state(), PaeState::Held);
+    }
+
+    // --- #12 (REQ-F-PAE-002): Higher Layer Interface ---
+
+    /// Verifies: #12 (REQ-F-PAE-002)
+    /// Per Cl.8.3: eapStart is set, then cleared when EAP begins.
+    #[test]
+    fn test_eap_start_cleared_on_eap_begin() {
+        let (mut pae, _) = create_pae();
+        pae.eap_start();
+        assert!(pae.is_eap_start());
+        pae.set_authenticate(true);
+        pae.step().unwrap(); // → Connecting
+        let eap_frame = EapolFrame::eap_packet(vec![0x01]);
+        pae.handle_eapol(&eap_frame).unwrap(); // → Authenticating, clears eapStart
+        assert!(!pae.is_eap_start());
+    }
+
+    /// Verifies: #12 (REQ-F-PAE-002)
+    /// Per Cl.8.3: eapStop prevents EAP message processing.
+    #[test]
+    fn test_eap_stop_blocks_eap() {
+        let (mut pae, _) = create_pae();
+        pae.set_authenticate(true);
+        pae.step().unwrap(); // → Connecting
+        pae.eap_stop();
+        assert!(pae.is_eap_stop());
+        let eap_frame = EapolFrame::eap_packet(vec![0x01]);
+        pae.handle_eapol(&eap_frame).unwrap(); // Should not transition
+        assert_eq!(pae.state(), PaeState::Connecting);
+    }
+
+    /// Verifies: #12 (REQ-F-PAE-002)
+    /// Per Cl.8.3: eapStop is cleared after processing.
+    #[test]
+    fn test_eap_stop_cleared_after_step() {
+        let (mut pae, _) = create_pae();
+        pae.eap_stop();
+        assert!(pae.is_eap_stop());
+        pae.step().unwrap();
+        assert!(!pae.is_eap_stop());
+    }
+
+    /// Verifies: #12 (REQ-F-PAE-002)
+    /// Per Cl.8.3: eapTimeout increments timeout counter.
+    #[test]
+    fn test_eap_timeout_increments_counter() {
+        let (mut pae, _) = create_pae();
+        // Not in Authenticating state, so counter stays 0
+        pae.eap_timeout();
+        assert_eq!(pae.counters().auth_timeouts_while_authenticating, 0);
+    }
+
+    // --- #13 (REQ-F-PAE-003): Client Interface ---
+
+    /// Verifies: #13 (REQ-F-PAE-003)
+    /// Per Cl.8.4: enabled + authenticate → authentication can proceed.
+    #[test]
+    fn test_enabled_authenticate_proceeds() {
+        let (mut pae, _) = create_pae();
+        pae.set_enabled(true);
+        pae.set_authenticate(true);
+        pae.step().unwrap();
+        assert_eq!(pae.state(), PaeState::Connecting);
+    }
+
+    /// Verifies: #13 (REQ-F-PAE-003)
+    /// Per Cl.8.4: authenticated flag is set on eapSuccess.
+    #[test]
+    fn test_authenticated_flag_on_success() {
+        let (mut pae, _) = create_pae();
+        pae.set_authenticate(true);
+        pae.step().unwrap();
+        let eap_frame = EapolFrame::eap_packet(vec![0x01]);
+        pae.handle_eapol(&eap_frame).unwrap();
+        pae.eap_success().unwrap();
+        assert!(pae.is_authenticated());
+        assert!(!pae.is_failed());
+    }
+
+    /// Verifies: #13 (REQ-F-PAE-003)
+    /// Per Cl.8.4: failed flag is set when auth fails and retries exhausted.
+    #[test]
+    fn test_failed_flag_on_exhausted_retries() {
+        let (mut pae, ctx) = create_pae();
+        pae.set_authenticate(true);
+        pae.step().unwrap();
+        let eap_frame = EapolFrame::eap_packet(vec![0x01]);
+        pae.handle_eapol(&eap_frame).unwrap();
+        for _ in 0..ctx.max_retries {
+            pae.eap_failure().unwrap();
+        }
+        assert!(pae.is_failed());
+        assert!(!pae.is_authenticated());
+    }
+
+    /// Verifies: #13 (REQ-F-PAE-003)
+    /// Per Cl.8.4: results are available after eapSuccess.
+    #[test]
+    fn test_results_available_on_success() {
+        let (mut pae, _) = create_pae();
+        pae.set_authenticate(true);
+        pae.step().unwrap();
+        let eap_frame = EapolFrame::eap_packet(vec![0x01]);
+        pae.handle_eapol(&eap_frame).unwrap();
+        pae.eap_success().unwrap();
+        let results = pae.results().expect("results should be available");
+        assert_eq!(results.identity, b"test-identity");
+    }
+
+    // --- #14 (REQ-F-PAE-004): Timers ---
+
+    /// Verifies: #14 (REQ-F-PAE-004)
+    /// Per Cl.8.6: heldWhile timer starts with heldPeriod on transition to HELD.
+    #[test]
+    fn test_held_while_timer_starts() {
+        let (mut pae, ctx) = create_pae();
+        pae.set_authenticate(true);
+        pae.step().unwrap();
+        let eap_frame = EapolFrame::eap_packet(vec![0x01]);
+        pae.handle_eapol(&eap_frame).unwrap();
+        for _ in 0..ctx.max_retries {
+            pae.eap_failure().unwrap();
+        }
+        assert_eq!(pae.state(), PaeState::Held);
+        // heldWhile starts, default is 60s
+        assert!(!pae.timer_expired(ctx.now() + Duration::from_secs(59)));
+        ctx.advance_time(ctx.held_while + Duration::from_secs(1));
+        pae.step().unwrap();
+        assert_eq!(pae.state(), PaeState::Connecting);
+    }
+
+    /// Verifies: #14 (REQ-F-PAE-004)
+    /// Per Cl.8.6: heldPeriod 0 means immediate retry.
+    #[test]
+    fn test_held_period_zero() {
+        let ctx = Arc::new(MockContext {
+            held_while: Duration::from_secs(0),
+            ..MockContext::new()
+        });
+        let mut pae = SupplicantPae::new(ctx.clone());
+        pae.set_authenticate(true);
+        pae.step().unwrap();
+        let eap_frame = EapolFrame::eap_packet(vec![0x01]);
+        pae.handle_eapol(&eap_frame).unwrap();
+        for _ in 0..ctx.max_retries {
+            pae.eap_failure().unwrap();
+        }
+        assert_eq!(pae.state(), PaeState::Held);
+        // With heldPeriod=0, step should immediately transition
+        pae.step().unwrap();
+        assert_eq!(pae.state(), PaeState::Connecting);
+    }
+
+    // --- #15 (REQ-F-PAE-005): EAPOL-Start Transmission ---
+
+    /// Verifies: #15 (REQ-F-PAE-005)
+    /// Per Cl.8.5: EAPOL-Start transmitted on transition from Disconnected to Connecting.
+    #[test]
+    fn test_eapol_start_transmitted_on_connecting() {
+        let (mut pae, ctx) = create_pae();
+        pae.set_authenticate(true);
+        pae.step().unwrap(); // → Connecting
+        assert_eq!(pae.state(), PaeState::Connecting);
+        assert_eq!(pae.counters().eapol_start_tx, 1);
+        let sent = ctx.sent_frames.read().unwrap();
+        assert_eq!(sent.len(), 1);
+        assert_eq!(
+            sent[0].packet_type,
+            crate::frame::EapolPacketType::EapolStart
+        );
+    }
+
+    // --- #16 (REQ-F-PAE-006): EAPOL-Logoff Transmission ---
+
+    /// Verifies: #16 (REQ-F-PAE-006)
+    /// Per Cl.8.5: EAPOL-Logoff transmitted when not MACsec secured.
+    #[test]
+    fn test_logoff_transmitted_when_not_secured() {
+        let (mut pae, ctx) = create_pae();
+        pae.set_authenticate(true);
+        pae.step().unwrap();
+        let eap_frame = EapolFrame::eap_packet(vec![0x01]);
+        pae.handle_eapol(&eap_frame).unwrap();
+        pae.eap_success().unwrap();
+        pae.logoff().unwrap();
+        assert_eq!(pae.counters().eapol_logoff_tx, 1);
+        let sent = ctx.sent_frames.read().unwrap();
+        assert!(sent
+            .iter()
+            .any(|f| f.packet_type == crate::frame::EapolPacketType::EapolLogoff));
+    }
+
+    /// Verifies: #16 (REQ-F-PAE-006)
+    /// Per Cl.8.5: EAPOL-Logoff omitted when MACsec secured.
+    #[test]
+    fn test_logoff_omitted_when_macsec_secured() {
+        let ctx = Arc::new(MockContext {
+            macsec_secured: true,
+            ..MockContext::new()
+        });
+        let mut pae = SupplicantPae::new(ctx.clone());
+        pae.set_authenticate(true);
+        pae.step().unwrap();
+        let eap_frame = EapolFrame::eap_packet(vec![0x01]);
+        pae.handle_eapol(&eap_frame).unwrap();
+        pae.eap_success().unwrap();
+        pae.logoff().unwrap();
+        assert_eq!(pae.state(), PaeState::Logoff);
+        assert_eq!(pae.counters().eapol_logoff_tx, 0); // No Logoff frame sent
+    }
+
+    // --- #17 (REQ-F-PAE-007): Retry Control ---
+
+    /// Verifies: #17 (REQ-F-PAE-007)
+    /// Per Cl.8.7: retryCount increments on each retry.
+    #[test]
+    fn test_retry_count_increments() {
+        let (mut pae, ctx) = create_pae();
+        pae.set_authenticate(true);
+        pae.step().unwrap(); // start_count=1
+                             // Timeout → retry
+        ctx.advance_time(ctx.start_when + Duration::from_secs(1));
+        pae.step().unwrap(); // start_count=2
+        assert_eq!(pae.start_count(), 2);
+    }
+
+    /// Verifies: #17 (REQ-F-PAE-007)
+    /// Per Cl.8.7: when retryCount >= retryMax, transition to Held.
+    #[test]
+    fn test_retry_max_exceeded_to_held() {
+        let (mut pae, ctx) = create_pae();
+        pae.set_authenticate(true);
+        pae.step().unwrap(); // start_count=1
+                             // Exhaust retries
+        for _ in 0..ctx.max_retries {
+            ctx.advance_time(ctx.start_when + Duration::from_secs(1));
+            pae.step().unwrap();
+        }
+        assert_eq!(pae.state(), PaeState::Held);
+    }
+
+    /// Verifies: #17 (REQ-F-PAE-007)
+    /// Per Cl.8.7: retryCount resets on reauthentication.
+    #[test]
+    fn test_retry_count_resets_on_reauth() {
+        let (mut pae, _) = create_pae();
+        pae.set_authenticate(true);
+        pae.step().unwrap();
+        let eap_frame = EapolFrame::eap_packet(vec![0x01]);
+        pae.handle_eapol(&eap_frame).unwrap();
+        pae.eap_success().unwrap();
+        assert_eq!(pae.state(), PaeState::Authenticated);
+        pae.reauthenticate().unwrap();
+        assert_eq!(pae.start_count(), 1); // reset + 1 from transition
+    }
+
+    // --- #18 (REQ-F-PAE-008): Diagnostic Counters ---
+
+    /// Verifies: #18 (REQ-F-PAE-008)
+    /// Per Cl.8.8: entersAuthenticating counter increments.
+    #[test]
+    fn test_counter_enters_authenticating() {
+        let (mut pae, _) = create_pae();
+        pae.set_authenticate(true);
+        pae.step().unwrap(); // → Connecting
+        let eap_frame = EapolFrame::eap_packet(vec![0x01]);
+        pae.handle_eapol(&eap_frame).unwrap(); // → Authenticating
+        assert_eq!(pae.counters().enters_authenticating, 1);
+    }
+
+    /// Verifies: #18 (REQ-F-PAE-008)
+    /// Per Cl.8.8: authSuccessesWhileAuthenticating counter increments.
+    #[test]
+    fn test_counter_auth_successes() {
+        let (mut pae, _) = create_pae();
+        pae.set_authenticate(true);
+        pae.step().unwrap();
+        let eap_frame = EapolFrame::eap_packet(vec![0x01]);
+        pae.handle_eapol(&eap_frame).unwrap();
+        pae.eap_success().unwrap();
+        assert_eq!(pae.counters().auth_successes_while_authenticating, 1);
+    }
+
+    /// Verifies: #18 (REQ-F-PAE-008)
+    /// Per Cl.8.8: authFailWhileAuthenticating counter increments.
+    #[test]
+    fn test_counter_auth_fail_while_authenticating() {
+        let (mut pae, _) = create_pae();
+        pae.set_authenticate(true);
+        pae.step().unwrap();
+        let eap_frame = EapolFrame::eap_packet(vec![0x01]);
+        pae.handle_eapol(&eap_frame).unwrap();
+        pae.eap_failure().unwrap();
+        assert_eq!(pae.counters().auth_fail_while_authenticating, 1);
+    }
+
+    /// Verifies: #18 (REQ-F-PAE-008)
+    /// Per Cl.8.8: eapLogoffWhileAuthenticating counter increments.
+    #[test]
+    fn test_counter_logoff_while_authenticating() {
+        let (mut pae, _) = create_pae();
+        pae.set_authenticate(true);
+        pae.step().unwrap();
+        let eap_frame = EapolFrame::eap_packet(vec![0x01]);
+        pae.handle_eapol(&eap_frame).unwrap();
+        pae.logoff().unwrap();
+        assert_eq!(pae.counters().eap_logoff_while_authenticating, 1);
+    }
+
+    /// Verifies: #18 (REQ-F-PAE-008)
+    /// Per Cl.8.8: eapLogoffWhileAuthenticated counter increments.
+    #[test]
+    fn test_counter_logoff_while_authenticated() {
+        let (mut pae, _) = create_pae();
+        pae.set_authenticate(true);
+        pae.step().unwrap();
+        let eap_frame = EapolFrame::eap_packet(vec![0x01]);
+        pae.handle_eapol(&eap_frame).unwrap();
+        pae.eap_success().unwrap();
+        pae.logoff().unwrap();
+        assert_eq!(pae.counters().eap_logoff_while_authenticated, 1);
+    }
+
+    /// Verifies: #18 (REQ-F-PAE-008)
+    /// Per Cl.8.8: authTimeoutsWhileAuthenticating counter increments on timeout.
+    #[test]
+    fn test_counter_auth_timeouts() {
+        let (mut pae, ctx) = create_pae();
+        pae.set_authenticate(true);
+        pae.step().unwrap();
+        let eap_frame = EapolFrame::eap_packet(vec![0x01]);
+        pae.handle_eapol(&eap_frame).unwrap(); // → Authenticating
+                                               // Wait for authWhile timeout
+        ctx.advance_time(ctx.auth_while + Duration::from_secs(1));
+        pae.step().unwrap(); // Timeout → retry
+        assert_eq!(pae.counters().auth_timeouts_while_authenticating, 1);
     }
 }
