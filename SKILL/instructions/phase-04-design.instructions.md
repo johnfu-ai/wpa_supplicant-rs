@@ -108,6 +108,14 @@ pub mod logon {
 - Data models specified
 - Design decisions trace to requirements
 
+## Phase Gate Approval
+
+Upon gate check approval, the following post-approval actions are required:
+
+1. Post approval comments on all component design GitHub Issues confirming the design is approved for implementation
+2. Add `phase:04-approved` label to all design issues
+3. Record the gate check report in `04-design/phase-gate-report.md`
+
 ## Next Phase
 
 Phase 05: Implementation (`05-implementation/`)

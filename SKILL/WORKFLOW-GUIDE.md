@@ -9,8 +9,8 @@ Phase 01          Phase 02          Phase 03          Phase 04          Phase 05
 Stakeholder  →    System       →   Architecture →   Detailed     →    Implementation
 Requirements      Requirements      Design            Design            (TDD)
 
-/project-kickoff  /requirements-    /architecture-    (design docs)     /tdd-compile
-                   elicit            starter
+/project-kickoff  /requirements-    /architecture-    /design-          /tdd-compile
+                   elicit            starter           starter
                    /requirements-
                    validate
 
@@ -96,12 +96,12 @@ Step 8:  /phase-gate-check
 ### Phase 04: Detailed Design
 
 ```
-Step 9:  (no slash command — design docs are created directly)
+Step 9:  /design-starter
          │
-         │  Tell me: "design the <component> component"
-         │  I reference the Architecture Strategist agent and Phase 04 instructions.
-         │  I create trait interfaces, struct layouts, enum definitions.
-         │  Docs go in 04-design/.
+         │  What happens: I analyze REQ-F issues, ADRs, ARC-C issues, and the
+         │  IEEE 802.1X-2020 standard, then produce detailed component designs
+         │  with trait interfaces, struct layouts, enum definitions, and DDD
+         │  tactical pattern classifications. Docs go in 04-design/.
          │
 Step 10: /phase-gate-check
          │
@@ -217,5 +217,7 @@ These can be called at ANY time, in ANY phase:
 5.  /traceability-builder     ← Verify links
 6.  /phase-gate-check         ← When requirements are solid
 7.  /architecture-starter     ← Move to Phase 03
-8.  ... and so on
+8.  /phase-gate-check         ← When architecture is complete
+9.  /design-starter           ← Move to Phase 04
+10. ... and so on
 ```

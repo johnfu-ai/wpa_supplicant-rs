@@ -27,7 +27,7 @@ SKILL/
 |---|---|---|
 | 01-02 Stakeholder & System Requirements | Requirements Analyst | `project-kickoff`, `requirements-elicit`, `requirements-validate` |
 | 03 Architecture | Architecture Strategist | `architecture-starter` |
-| 04 Design | Architecture Strategist | — |
+| 04 Design | Design Engineer | `design-starter` |
 | 05 Implementation | TDD Driver | `tdd-compile` |
 | 06 Integration | TDD Driver | — |
 | 07 Verification & Validation | Testing Specialist | `test-validate` |
