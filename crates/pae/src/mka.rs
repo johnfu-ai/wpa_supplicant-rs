@@ -245,6 +245,110 @@ impl std::fmt::Debug for Kek {
     }
 }
 
+/// Secure Association Key — ephemeral per-session key.
+///
+/// Per IEEE 802.1X-2020, Clause 9.8.
+/// Zeroized on drop; no Clone.
+#[derive(ZeroizeOnDrop)]
+pub struct Sak {
+    /// SAK key bytes.
+    key: [u8; Self::MAX_LEN],
+    /// Active key length.
+    len: usize,
+    /// Association Number (AN) for this SAK.
+    an: u8,
+}
+
+impl Sak {
+    /// Maximum SAK length (AES-256).
+    const MAX_LEN: usize = 32;
+
+    /// Valid SAK lengths: 16 bytes (AES-128) or 32 bytes (AES-256).
+    const VALID_LENGTHS: [usize; 2] = [16, 32];
+
+    /// Create a SAK from raw bytes with an AN. Per Cl.9.8.
+    ///
+    /// # Errors
+    /// Returns `PaeError::KeyError` if `key` is not 16 or 32 bytes, or AN > 3.
+    pub fn from_bytes(key: &[u8], an: u8) -> Result<Self, crate::PaeError> {
+        if !Self::VALID_LENGTHS.contains(&key.len()) {
+            return Err(crate::PaeError::KeyError(format!(
+                "SAK must be 16 or 32 bytes, got {}",
+                key.len()
+            )));
+        }
+        if an > 3 {
+            return Err(crate::PaeError::KeyError(format!(
+                "AN must be 0-3, got {}",
+                an
+            )));
+        }
+        let mut buf = [0u8; Self::MAX_LEN];
+        buf[..key.len()].copy_from_slice(key);
+        Ok(Self {
+            key: buf,
+            len: key.len(),
+            an,
+        })
+    }
+
+    /// Association Number (0-3). Per Cl.9.8.
+    pub fn an(&self) -> u8 {
+        self.an
+    }
+
+    /// SAK length in bytes.
+    pub fn len(&self) -> usize {
+        self.len
+    }
+
+    /// Whether the SAK is empty.
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    /// Key bytes as a slice (internal use only).
+    /// Used by REQ-F-MKA-007 (SAK wrap/unwrap) for key encryption.
+    #[allow(dead_code)]
+    pub(crate) fn as_bytes(&self) -> &[u8] {
+        &self.key[..self.len]
+    }
+}
+
+impl std::fmt::Debug for Sak {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Sak").field("an", &self.an).finish()
+    }
+}
+
+/// Secure Channel Identifier.
+///
+/// Per IEEE 802.1X-2020, Clause 9.4.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Sci {
+    /// System MAC address (6 bytes).
+    mac: [u8; 6],
+    /// Port number.
+    port: u16,
+}
+
+impl Sci {
+    /// Create an SCI from MAC and port number.
+    pub fn new(mac: [u8; 6], port: u16) -> Self {
+        Self { mac, port }
+    }
+
+    /// MAC address bytes.
+    pub fn mac(&self) -> &[u8; 6] {
+        &self.mac
+    }
+
+    /// Port number.
+    pub fn port(&self) -> u16 {
+        self.port
+    }
+}
+
 /// Key Derivation Function trait.
 ///
 /// Per ADR-KDF-008 (#80) and IEEE 802.1X-2020, Clause 9.6.

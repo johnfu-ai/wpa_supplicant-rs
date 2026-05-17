@@ -8,7 +8,7 @@
 //! - CP (Controlled Port) state machine types
 //! - PAE port state definitions
 //!
-//! Implements: #19 (REQ-F-MKA-001), #23 (REQ-F-MKA-005), #28 (REQ-F-MKA-010)
+//! Implements: #19 (REQ-F-MKA-001), #23 (REQ-F-MKA-005), #27 (REQ-F-MKA-009), #28 (REQ-F-MKA-010), #29 (REQ-F-CP-001)
 //! Architecture: #74 (ADR-SM-002), #76 (ADR-SEC-004), #80 (ADR-KDF-008)
 
 #![warn(missing_docs)]
@@ -40,13 +40,33 @@ pub enum PaeError {
     #[error("key error: {0}")]
     KeyError(String),
 
+    /// Peer list is full (supplicant limit reached).
+    #[error("peer list full: {which}")]
+    PeerListFull {
+        /// Which list is full ("live" or "potential").
+        which: String,
+    },
+
+    /// Operation requires Key Server role.
+    #[error("not key server")]
+    NotKeyServer,
+
+    /// ICV verification failed.
+    #[error("ICV verification failed")]
+    IcvFailed,
+
+    /// MKPDU parsing failed.
+    #[error("invalid MKPDU: {0}")]
+    InvalidMkpdu(String),
+
     /// Crypto operation failed.
     #[error("crypto error: {0}")]
     CryptoError(String),
 }
 
 // Re-export key types for convenience
+pub use cp::{CpEvent, CpState, CpStateMachine, CpTransition, SecureAssociation, SecureChannel};
 pub use mka::{
     common_cipher_suite, AesCmacKdf, Cak, CakEntry, CakStore, CipherSuite, Ckn, Ick, Kdf, Kek,
-    MkaState, Rng, SystemRng,
+    MkaState, Rng, Sak, Sci, SystemRng,
 };
