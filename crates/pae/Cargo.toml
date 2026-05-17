@@ -10,6 +10,10 @@ rust-version.workspace = true
 tracing.workspace = true
 thiserror.workspace = true
 zeroize.workspace = true
+aes = "0.8"
+cmac = "0.7"
+digest = "0.10"
+getrandom = "0.2"
 
 [features]
 default = []
