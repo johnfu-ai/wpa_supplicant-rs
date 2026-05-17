@@ -458,14 +458,18 @@ impl AesCmacKdf {
 impl Kdf for AesCmacKdf {
     fn derive_ick(&self, cak: &Cak, ckn: &Ckn) -> Result<Ick, crate::PaeError> {
         let ick_len = cak.len(); // ICK length matches CAK length
-        let derived = Self::kdf_cmac(cak, KDF_LABEL_ICK, ckn, ick_len)?;
-        Ick::from_bytes(&derived)
+        let mut derived = Self::kdf_cmac(cak, KDF_LABEL_ICK, ckn, ick_len)?;
+        let result = Ick::from_bytes(&derived);
+        zeroize::Zeroize::zeroize(&mut derived);
+        result
     }
 
     fn derive_kek(&self, cak: &Cak, ckn: &Ckn) -> Result<Kek, crate::PaeError> {
         let kek_len = cak.len(); // KEK length matches CAK length
-        let derived = Self::kdf_cmac(cak, KDF_LABEL_KEK, ckn, kek_len)?;
-        Kek::from_bytes(&derived)
+        let mut derived = Self::kdf_cmac(cak, KDF_LABEL_KEK, ckn, kek_len)?;
+        let result = Kek::from_bytes(&derived);
+        zeroize::Zeroize::zeroize(&mut derived);
+        result
     }
 }
 

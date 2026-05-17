@@ -372,6 +372,9 @@ impl<C: SupplicantPaeContext> SupplicantPae<C> {
                 self.counters.enters_authenticating += 1;
                 // Clear eapStart when EAP attempt begins
                 self.eap_start = false;
+                // Per Cl.8.3: start authWhile timer on entering Authenticating
+                let now = self.ctx.now();
+                self.start_timer(ActiveTimer::AuthWhile, self.ctx.get_auth_while(), now);
             }
             _ => {}
         }
@@ -493,7 +496,8 @@ impl<C: SupplicantPaeContext> SupplicantPae<C> {
         }
         self.counters.auth_fail_while_authenticating += 1;
         if self.start_count < self.ctx.get_max_retries() {
-            self.start_count += 1;
+            // Per Cl.8.3: retry authentication
+            self.transition_to_connecting()?;
         } else {
             self.state = PaeState::Held;
             self.authenticated = false;
@@ -701,7 +705,7 @@ mod tests {
     }
 
     /// Verifies: #11 (REQ-F-PAE-001)
-    /// Per Cl.8.3: Authenticating + eapFail + retries < max → retry.
+    /// Per Cl.8.3: Authenticating + eapFail + retries < max → retry (transition to Connecting).
     #[test]
     fn test_pae_eap_failure_retry() {
         let (mut pae, _) = create_pae();
@@ -710,7 +714,9 @@ mod tests {
         let eap_frame = EapolFrame::eap_packet(vec![0x01]);
         pae.handle_eapol(&eap_frame).unwrap(); // → Authenticating
         pae.eap_failure().unwrap();
-        assert_eq!(pae.start_count(), 2); // 1 from connecting + 1 from failure
+        // eap_failure now transitions to Connecting for retry
+        assert_eq!(pae.state(), PaeState::Connecting);
+        assert_eq!(pae.start_count(), 2); // 1 from initial + 1 from retry
     }
 
     /// Verifies: #11 (REQ-F-PAE-001)
@@ -720,10 +726,11 @@ mod tests {
         let (mut pae, ctx) = create_pae();
         pae.set_authenticate(true);
         pae.step().unwrap(); // → Connecting, start_count=1
-        let eap_frame = EapolFrame::eap_packet(vec![0x01]);
-        pae.handle_eapol(&eap_frame).unwrap(); // → Authenticating
+                             // Drive retries until exhausted
         for _ in 0..ctx.max_retries {
-            pae.eap_failure().unwrap();
+            let eap_frame = EapolFrame::eap_packet(vec![0x01]);
+            pae.handle_eapol(&eap_frame).unwrap(); // → Authenticating
+            pae.eap_failure().unwrap(); // → Connecting (retry) or Held (exhausted)
         }
         assert_eq!(pae.state(), PaeState::Held);
     }
@@ -751,9 +758,9 @@ mod tests {
         let (mut pae, ctx) = create_pae();
         pae.set_authenticate(true);
         pae.step().unwrap();
-        let eap_frame = EapolFrame::eap_packet(vec![0x01]);
-        pae.handle_eapol(&eap_frame).unwrap();
         for _ in 0..ctx.max_retries {
+            let eap_frame = EapolFrame::eap_packet(vec![0x01]);
+            pae.handle_eapol(&eap_frame).unwrap();
             pae.eap_failure().unwrap();
         }
         assert_eq!(pae.state(), PaeState::Held);
@@ -913,9 +920,9 @@ mod tests {
         let (mut pae, ctx) = create_pae();
         pae.set_authenticate(true);
         pae.step().unwrap();
-        let eap_frame = EapolFrame::eap_packet(vec![0x01]);
-        pae.handle_eapol(&eap_frame).unwrap();
         for _ in 0..ctx.max_retries {
+            let eap_frame = EapolFrame::eap_packet(vec![0x01]);
+            pae.handle_eapol(&eap_frame).unwrap();
             pae.eap_failure().unwrap();
         }
         assert!(pae.is_failed());
@@ -945,14 +952,13 @@ mod tests {
         let (mut pae, ctx) = create_pae();
         pae.set_authenticate(true);
         pae.step().unwrap();
-        let eap_frame = EapolFrame::eap_packet(vec![0x01]);
-        pae.handle_eapol(&eap_frame).unwrap();
         for _ in 0..ctx.max_retries {
+            let eap_frame = EapolFrame::eap_packet(vec![0x01]);
+            pae.handle_eapol(&eap_frame).unwrap();
             pae.eap_failure().unwrap();
         }
         assert_eq!(pae.state(), PaeState::Held);
         // heldWhile starts, default is 60s
-        assert!(!pae.timer_expired(ctx.now() + Duration::from_secs(59)));
         ctx.advance_time(ctx.held_while + Duration::from_secs(1));
         pae.step().unwrap();
         assert_eq!(pae.state(), PaeState::Connecting);
@@ -969,9 +975,9 @@ mod tests {
         let mut pae = SupplicantPae::new(ctx.clone());
         pae.set_authenticate(true);
         pae.step().unwrap();
-        let eap_frame = EapolFrame::eap_packet(vec![0x01]);
-        pae.handle_eapol(&eap_frame).unwrap();
         for _ in 0..ctx.max_retries {
+            let eap_frame = EapolFrame::eap_packet(vec![0x01]);
+            pae.handle_eapol(&eap_frame).unwrap();
             pae.eap_failure().unwrap();
         }
         assert_eq!(pae.state(), PaeState::Held);

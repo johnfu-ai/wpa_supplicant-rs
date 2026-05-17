@@ -163,7 +163,15 @@ impl EapolFrame {
                 Self::MAX_BODY_SIZE
             )));
         }
-        let body = bytes[Self::HEADER_SIZE..].to_vec();
+        let expected_len = Self::HEADER_SIZE + body_len;
+        if bytes.len() < expected_len {
+            return Err(EapolError::InvalidFrame(format!(
+                "frame truncated: have {} bytes, need {}",
+                bytes.len(),
+                expected_len
+            )));
+        }
+        let body = bytes[Self::HEADER_SIZE..expected_len].to_vec();
         Ok(Self {
             version,
             packet_type,

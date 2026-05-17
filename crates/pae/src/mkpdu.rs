@@ -81,8 +81,8 @@ pub struct BasicParameterSet {
 impl BasicParameterSet {
     /// Encoded size of the fixed portion (before CKN).
     /// version(1) + priority(1) + macsec_cap(1) + macsec_desired(1) +
-    /// SCI(8) + actor_mi(12) + actor_mn(4) + key_server_mi(12) = 40 bytes.
-    const FIXED_SIZE: usize = 40;
+    /// SCI(8) + actor_mi(12) + actor_mn(4) + key_server_mi(12) + AN(1) + cipher_suite(4) = 45 bytes.
+    const FIXED_SIZE: usize = 45;
 
     /// Encode the Basic Parameter Set to bytes (without TLV header).
     fn encode_body(&self) -> Vec<u8> {
@@ -110,16 +110,29 @@ impl BasicParameterSet {
 
     /// Decode the Basic Parameter Set from body bytes.
     fn decode_body(bytes: &[u8]) -> Result<Self, PaeError> {
-        if bytes.len() < Self::FIXED_SIZE {
+        // FIXED_SIZE(45) + minimum CKN(1) = 46
+        if bytes.len() < Self::FIXED_SIZE + 1 {
             return Err(PaeError::InvalidMkpdu(format!(
                 "BPS too short: {} < {}",
                 bytes.len(),
-                Self::FIXED_SIZE
+                Self::FIXED_SIZE + 1
             )));
         }
         let version = bytes[0];
+        if version > MKPDU_VERSION {
+            return Err(PaeError::InvalidMkpdu(format!(
+                "unsupported MKPDU version: {}",
+                version
+            )));
+        }
         let key_server_priority = bytes[1];
         let macsec_capability = bytes[2];
+        if macsec_capability > 4 {
+            return Err(PaeError::InvalidMkpdu(format!(
+                "invalid macsec_capability: {}",
+                macsec_capability
+            )));
+        }
         let macsec_desired = (bytes[3] & 0x80) != 0;
         let mut mac = [0u8; 6];
         mac.copy_from_slice(&bytes[4..10]);
@@ -371,7 +384,9 @@ impl ParameterSet {
         let total_len = PARAM_HEADER_SIZE + body_len;
         let padded_len = (total_len + 3) & !3; // round up to 4-byte boundary
         let padding = padded_len - total_len;
-        let length_field = (PARAM_HEADER_SIZE + body_len) as u16;
+        let length_field = u16::try_from(PARAM_HEADER_SIZE + body_len).map_err(|_| {
+            PaeError::InvalidMkpdu("parameter set too large for u16 length field".into())
+        })?;
         let mut buf = Vec::with_capacity(padded_len);
         buf.push(self.param_type());
         buf.extend_from_slice(&length_field.to_be_bytes());
@@ -475,7 +490,10 @@ impl Mkpdu {
     /// Create a new MKPDU from parameter sets.
     ///
     /// # Errors
-    /// Returns `PaeError::InvalidMkpdu` if the first parameter set is not Basic.
+    /// Returns `PaeError::InvalidMkpdu` if:
+    /// - The first parameter set is not Basic
+    /// - ICV is present but not the last parameter set
+    /// - Duplicate parameter sets found (Basic, SAK Use, DistribSAK, ICV)
     pub fn new(parameter_sets: Vec<ParameterSet>) -> Result<Self, PaeError> {
         if parameter_sets.is_empty() {
             return Err(PaeError::InvalidMkpdu(
@@ -487,14 +505,49 @@ impl Mkpdu {
                 "first parameter set must be Basic".into(),
             ));
         }
+        // Per Cl.11.11: ICV must be the last parameter set
+        let icv_positions: Vec<usize> = parameter_sets
+            .iter()
+            .enumerate()
+            .filter(|(_, ps)| ps.param_type() == param_type::ICV)
+            .map(|(i, _)| i)
+            .collect();
+        if !icv_positions.is_empty()
+            && icv_positions[icv_positions.len() - 1] != parameter_sets.len() - 1
+        {
+            return Err(PaeError::InvalidMkpdu(
+                "ICV must be the last parameter set".into(),
+            ));
+        }
+        // Check for duplicates of singleton parameter sets
+        let mut seen = std::collections::HashSet::new();
+        let singletons = [
+            param_type::BASIC,
+            param_type::SAK_USE,
+            param_type::DISTRIB_SAK,
+            param_type::ICV,
+        ];
+        for ps in &parameter_sets {
+            let pt = ps.param_type();
+            if singletons.contains(&pt) && !seen.insert(pt) {
+                return Err(PaeError::InvalidMkpdu(format!(
+                    "duplicate parameter set type: {}",
+                    pt
+                )));
+            }
+        }
         Ok(Self { parameter_sets })
     }
 
     /// Get the Basic Parameter Set.
+    ///
+    /// # Panics
+    /// Never panics in practice — enforced by `Mkpdu::new()`.
     pub fn basic(&self) -> &BasicParameterSet {
         match &self.parameter_sets[0] {
             ParameterSet::Basic(bps) => bps,
-            _ => unreachable!("first parameter set must be Basic"),
+            // SAFETY: Mkpdu::new() enforces first parameter set is Basic
+            _ => unreachable!(),
         }
     }
 
@@ -504,6 +557,47 @@ impl Mkpdu {
             ParameterSet::Icv(icv) => Some(icv),
             _ => None,
         })
+    }
+
+    /// Verify the ICV against a computed value.
+    ///
+    /// Per Cl.11.11: the ICV covers all parameter sets except the ICV itself.
+    /// The caller must compute the expected ICV using the ICK and pass it here.
+    /// Uses constant-time comparison to prevent timing side-channel attacks.
+    ///
+    /// # Errors
+    /// Returns `PaeError::IcvFailed` if the MKPDU has no ICV or verification fails.
+    pub fn verify_icv(&self, expected_icv: &[u8; ICV_LEN]) -> Result<(), PaeError> {
+        match self.icv() {
+            Some(received) => {
+                // Constant-time comparison to prevent timing attacks
+                let mut diff = 0u8;
+                for (a, b) in received.iter().zip(expected_icv.iter()) {
+                    diff |= a ^ b;
+                }
+                if diff == 0 {
+                    Ok(())
+                } else {
+                    Err(PaeError::IcvFailed)
+                }
+            }
+            None => Err(PaeError::InvalidMkpdu("MKPDU has no ICV".into())),
+        }
+    }
+
+    /// Encode all parameter sets except the ICV (for ICV computation).
+    ///
+    /// The caller uses this to compute the AES-CMAC over the MKPDU content,
+    /// then passes the result to `verify_icv()`.
+    pub fn encode_without_icv(&self) -> Result<Vec<u8>, PaeError> {
+        let mut buf = Vec::new();
+        for ps in &self.parameter_sets {
+            if ps.param_type() == param_type::ICV {
+                continue;
+            }
+            buf.extend_from_slice(&ps.encode()?);
+        }
+        Ok(buf)
     }
 
     /// Get all parameter sets.
