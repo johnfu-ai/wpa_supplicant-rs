@@ -8,13 +8,16 @@
 //! - CP (Controlled Port) state machine types
 //! - PAE port state definitions
 //!
-//! Implements: #19 (REQ-F-MKA-001), #23 (REQ-F-MKA-005), #27 (REQ-F-MKA-009), #28 (REQ-F-MKA-010), #29 (REQ-F-CP-001)
+//! Implements: #19 (REQ-F-MKA-001), #23 (REQ-F-MKA-005), #27 (REQ-F-MKA-009), #28 (REQ-F-MKA-010), #29 (REQ-F-CP-001), #47 (REQ-F-EAPOL-004)
 //! Architecture: #74 (ADR-SM-002), #76 (ADR-SEC-004), #80 (ADR-KDF-008)
 
 #![warn(missing_docs)]
 
 /// MKA key agreement types per IEEE 802.1X-2020, Clause 9.
 pub mod mka;
+
+/// MKPDU format per IEEE 802.1X-2020, Clause 11.11.
+pub mod mkpdu;
 
 /// Controlled Port state machine types per IEEE 802.1X-2020, Clause 10.
 pub mod cp;
@@ -69,5 +72,9 @@ pub use cp::{CpEvent, CpState, CpStateMachine, CpTransition, SecureAssociation, 
 pub use mka::{
     common_cipher_suite, AesCmacKdf, Cak, CakEntry, CakStore, CipherSuite, Ckn, Ick, Kdf, Kek,
     MkaState, Rng, Sak, Sci, SystemRng,
+};
+pub use mkpdu::{
+    BasicParameterSet, DistribSakParameterSet, Mkpdu, ParameterSet, PeerEntry, SakUseParameterSet,
+    ICV_LEN, MKPDU_VERSION,
 };
 pub use port::PortState;
