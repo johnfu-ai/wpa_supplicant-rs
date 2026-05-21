@@ -1,6 +1,6 @@
 //! Controlled Port state machine per IEEE 802.1X-2020, Clause 10.
 //!
-//! Implements: #29 (REQ-F-CP-001: CP State Machine), #30 (REQ-F-CP-002: CP State Machine Interface)
+//! Implements: #29 (REQ-F-CP-001), #30 (REQ-F-CP-002), #31 (REQ-F-CP-003), #32 (REQ-F-CP-004)
 //! Architecture: #74 (ADR-SM-002), #76 (ADR-SEC-004)
 //!
 //! IMPORTANT: This implementation is based on understanding of IEEE 802.1X-2020.
@@ -90,6 +90,16 @@ impl SecureChannel {
     /// Number of active SAs in this channel.
     pub fn active_sa_count(&self) -> usize {
         self.active_sa_count
+    }
+
+    /// Key length in bytes for this channel's cipher suite. Per Cl.9.7.
+    pub fn key_len(&self) -> usize {
+        self.cipher_suite.key_len()
+    }
+
+    /// Whether this channel uses XPN (extended packet number). Per Cl.9.7.
+    pub fn is_xpn(&self) -> bool {
+        self.cipher_suite.is_xpn()
     }
 }
 
@@ -450,6 +460,15 @@ impl CpStateMachine {
         sci: Sci,
         cipher_suite: CipherSuite,
     ) -> Result<Vec<CpTransition>, crate::PaeError> {
+        // Validate SAK key length matches cipher suite per Cl.9.7
+        if sak.as_bytes().len() != cipher_suite.key_len() {
+            return Err(crate::PaeError::KeyError(format!(
+                "SAK length {} does not match cipher suite key length {}",
+                sak.as_bytes().len(),
+                cipher_suite.key_len()
+            )));
+        }
+
         match self.state {
             CpState::Disabled => Err(crate::PaeError::InvalidTransition {
                 from: "Disabled".into(),
@@ -475,6 +494,7 @@ impl CpStateMachine {
                     old.retire();
                     self.old_sa = Some(old);
                 }
+                self.secure_channel = Some(SecureChannel::new(sci, cipher_suite));
                 self.current_sa = Some(SecureAssociation::new(an));
                 Ok(vec![CpTransition::SakRekeyed {
                     port_id: self.port_id,
@@ -773,7 +793,7 @@ mod tests {
     fn test_cp_secure_channel_after_sak() {
         let mut cp = CpStateMachine::new(1);
         cp.handle_event(CpEvent::EnableUnsecured).unwrap();
-        let sak = Sak::from_bytes(&[0x01; 16], 2).unwrap();
+        let sak = Sak::from_bytes(&[0x01; 32], 2).unwrap();
         let sci = Sci::new([0xAA; 6], 42);
         cp.handle_event(CpEvent::SakAvailable {
             sak,
@@ -1258,5 +1278,129 @@ mod tests {
         assert!(!sa.is_receiving());
         assert!(!sa.is_transmitting());
         assert!(sa.is_retired());
+    }
+
+    // --- REQ-F-CP-004: MACsec Cipher Suite Support (Clause 9.7) ---
+
+    /// Verifies: #32 (REQ-F-CP-004)
+    /// Per IEEE 802.1X-2020, Clause 9.7.
+    /// GCM-AES-128 SAK has 16-byte key and SecureChannel is configured.
+    #[test]
+    fn test_cp_cipher_suite_gcm_aes_128() {
+        let mut cp = CpStateMachine::new(1);
+        cp.handle_event(CpEvent::EnableUnsecured).unwrap();
+        let sak = Sak::from_bytes(&[0x01; 16], 0).unwrap();
+        let sci = Sci::new([0xAA; 6], 1);
+        cp.handle_event(CpEvent::SakAvailable {
+            sak,
+            sci,
+            cipher_suite: CipherSuite::GcmAes128,
+        })
+        .unwrap();
+        let sc = cp.secure_channel().unwrap();
+        assert_eq!(sc.cipher_suite(), CipherSuite::GcmAes128);
+        assert_eq!(sc.key_len(), 16);
+        assert!(!sc.is_xpn());
+    }
+
+    /// Verifies: #32 (REQ-F-CP-004)
+    /// Per IEEE 802.1X-2020, Clause 9.7.
+    /// GCM-AES-256 SAK has 32-byte key and SecureChannel is configured.
+    #[test]
+    fn test_cp_cipher_suite_gcm_aes_256() {
+        let mut cp = CpStateMachine::new(1);
+        cp.handle_event(CpEvent::EnableUnsecured).unwrap();
+        let sak = Sak::from_bytes(&[0x01; 32], 0).unwrap();
+        let sci = Sci::new([0xAA; 6], 1);
+        cp.handle_event(CpEvent::SakAvailable {
+            sak,
+            sci,
+            cipher_suite: CipherSuite::GcmAes256,
+        })
+        .unwrap();
+        let sc = cp.secure_channel().unwrap();
+        assert_eq!(sc.cipher_suite(), CipherSuite::GcmAes256);
+        assert_eq!(sc.key_len(), 32);
+        assert!(!sc.is_xpn());
+    }
+
+    /// Verifies: #32 (REQ-F-CP-004)
+    /// Per IEEE 802.1X-2020, Clause 9.7.
+    /// GCM-AES-XPN-256 SAK has 32-byte key and XPN mode is enabled.
+    #[test]
+    fn test_cp_cipher_suite_gcm_aes_xpn_256() {
+        let mut cp = CpStateMachine::new(1);
+        cp.handle_event(CpEvent::EnableUnsecured).unwrap();
+        let sak = Sak::from_bytes(&[0x01; 32], 1).unwrap();
+        let sci = Sci::new([0xBB; 6], 1);
+        cp.handle_event(CpEvent::SakAvailable {
+            sak,
+            sci,
+            cipher_suite: CipherSuite::GcmAesXpn256,
+        })
+        .unwrap();
+        let sc = cp.secure_channel().unwrap();
+        assert_eq!(sc.cipher_suite(), CipherSuite::GcmAesXpn256);
+        assert_eq!(sc.key_len(), 32);
+        assert!(sc.is_xpn());
+    }
+
+    /// Verifies: #32 (REQ-F-CP-004)
+    /// Per IEEE 802.1X-2020, Clause 9.7.
+    /// SecureChannel rejects SAK with wrong key length for the cipher suite.
+    #[test]
+    fn test_cp_cipher_suite_wrong_sak_length() {
+        let mut cp = CpStateMachine::new(1);
+        cp.handle_event(CpEvent::EnableUnsecured).unwrap();
+        // 16-byte SAK with AES-256 cipher suite → wrong
+        let sak = Sak::from_bytes(&[0x01; 16], 0).unwrap();
+        let sci = Sci::new([0xAA; 6], 1);
+        let result = cp.handle_event(CpEvent::SakAvailable {
+            sak,
+            sci,
+            cipher_suite: CipherSuite::GcmAes256,
+        });
+        assert!(
+            result.is_err(),
+            "SAK with wrong key length must be rejected"
+        );
+    }
+
+    /// Verifies: #32 (REQ-F-CP-004)
+    /// Per IEEE 802.1X-2020, Clause 9.7.
+    /// Cipher suite rekey changes the SecureChannel configuration.
+    #[test]
+    fn test_cp_cipher_suite_rekey() {
+        let mut cp = CpStateMachine::new(1);
+        cp.handle_event(CpEvent::EnableUnsecured).unwrap();
+
+        // First SAK: AES-128
+        let sak0 = Sak::from_bytes(&[0x01; 16], 0).unwrap();
+        let sci0 = Sci::new([0xAA; 6], 1);
+        cp.handle_event(CpEvent::SakAvailable {
+            sak: sak0,
+            sci: sci0,
+            cipher_suite: CipherSuite::GcmAes128,
+        })
+        .unwrap();
+        assert_eq!(
+            cp.secure_channel().unwrap().cipher_suite(),
+            CipherSuite::GcmAes128
+        );
+
+        // Rekey with AES-256
+        let sak1 = Sak::from_bytes(&[0x02; 32], 1).unwrap();
+        let sci1 = Sci::new([0xBB; 6], 1);
+        cp.handle_event(CpEvent::SakAvailable {
+            sak: sak1,
+            sci: sci1,
+            cipher_suite: CipherSuite::GcmAes256,
+        })
+        .unwrap();
+        assert_eq!(
+            cp.secure_channel().unwrap().cipher_suite(),
+            CipherSuite::GcmAes256
+        );
+        assert_eq!(cp.secure_channel().unwrap().key_len(), 32);
     }
 }
