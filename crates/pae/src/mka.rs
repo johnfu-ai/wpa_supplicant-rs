@@ -1449,7 +1449,7 @@ impl Default for MkaPeerList {
 /// Owned values — no lifetimes. All state machines return `Vec<PaeEvent>`.
 ///
 /// Implements: #20 (REQ-F-MKA-002: MKA Transport), #24 (REQ-F-MKA-006: SAK Reception)
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub enum PaeEvent {
     // --- MKA events ---
     /// MKA participant needs to transmit an MKPDU.
@@ -1460,6 +1460,7 @@ pub enum PaeEvent {
     /// MKA has derived and installed a new SAK.
     MkaSakInstalled {
         /// SAK key bytes (owned, since Sak is not Clone per INV-PAE-002).
+        /// REDACTED in Debug output to prevent key leakage.
         sak_key: Vec<u8>,
         /// Association Number for the SAK.
         sak_an: u8,
@@ -1472,6 +1473,31 @@ pub enum PaeEvent {
     MkaSessionEstablished,
     /// MKA session terminated (no live peers).
     MkaSessionTerminated,
+}
+
+impl std::fmt::Debug for PaeEvent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::MkaTransmit { mkpdu } => f
+                .debug_struct("MkaTransmit")
+                .field("mkpdu_len", &mkpdu.len())
+                .finish(),
+            Self::MkaSakInstalled {
+                sak_key: _,
+                sak_an,
+                sci,
+                cipher_suite,
+            } => f
+                .debug_struct("MkaSakInstalled")
+                .field("sak_key", &"[REDACTED]")
+                .field("sak_an", sak_an)
+                .field("sci", sci)
+                .field("cipher_suite", cipher_suite)
+                .finish(),
+            Self::MkaSessionEstablished => write!(f, "MkaSessionEstablished"),
+            Self::MkaSessionTerminated => write!(f, "MkaSessionTerminated"),
+        }
+    }
 }
 
 #[cfg(test)]
