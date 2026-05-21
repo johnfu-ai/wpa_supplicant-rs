@@ -1,6 +1,6 @@
 //! Controlled Port state machine per IEEE 802.1X-2020, Clause 10.
 //!
-//! Implements: #29 (REQ-F-CP-001: CP State Machine)
+//! Implements: #29 (REQ-F-CP-001: CP State Machine), #30 (REQ-F-CP-002: CP State Machine Interface)
 //! Architecture: #74 (ADR-SM-002), #76 (ADR-SEC-004)
 //!
 //! IMPORTANT: This implementation is based on understanding of IEEE 802.1X-2020.
@@ -123,14 +123,16 @@ impl SecureAssociation {
 
 /// CP State Machine — manages Controlled Port transitions.
 ///
-/// Per IEEE 802.1X-2020, Clause 10.
+/// Per IEEE 802.1X-2020, Clause 10 and Clause 12.3.
 /// Transitions driven by MKA SAK installation and Logon Process.
 ///
+/// Implements: #29 (REQ-F-CP-001), #30 (REQ-F-CP-002)
+///
 /// State transitions (INV-PAE-006):
-/// - `Disabled` → `Unsecured`: on `EnableUnsecured`
-/// - `Unsecured` → `Secured`: on `SakAvailable`
-/// - `Secured` → `Disabled`: on `Disable`
-/// - `Unsecured` → `Disabled`: on `Disable`
+/// - `Disabled` → `Unsecured`: on `EnableUnsecured` or `authenticated=TRUE`
+/// - `Unsecured` → `Secured`: on `SakAvailable` or `secure=TRUE`
+/// - `Secured` → `Disabled`: on `Disable` or `failed=TRUE`
+/// - `Unsecured` → `Disabled`: on `Disable` or `failed=TRUE`
 /// - `Secured` → `Unsecured`: on `SakRetireExpired` (SAK retired, fall back)
 pub struct CpStateMachine {
     /// Current CP state.
@@ -141,6 +143,14 @@ pub struct CpStateMachine {
     secure_channel: Option<SecureChannel>,
     /// Current Secure Association (if SAK installed).
     current_sa: Option<SecureAssociation>,
+    /// Per Cl.12.3: principal actor signals MACsec is active.
+    secure: bool,
+    /// Per Cl.12.3: principal actor signals authentication succeeded.
+    authenticated: bool,
+    /// Per Cl.12.3: all actors have failed.
+    failed: bool,
+    /// Per Cl.12.3: state change notification flag.
+    new_info: bool,
 }
 
 impl CpStateMachine {
@@ -151,6 +161,10 @@ impl CpStateMachine {
             port_id,
             secure_channel: None,
             current_sa: None,
+            secure: false,
+            authenticated: false,
+            failed: false,
+            new_info: false,
         }
     }
 
@@ -205,9 +219,110 @@ impl CpStateMachine {
         self.state == CpState::Secured
     }
 
+    // --- Clause 12.3 Interface Variables (REQ-F-CP-002, #30) ---
+
+    /// Per Cl.12.3: controlledPortEnabled.
+    ///
+    /// TRUE when the Controlled Port is operational (Unsecured or Secured)
+    /// and not failed. FALSE in Disabled or when failed=TRUE.
+    pub fn controlled_port_enabled(&self) -> bool {
+        if self.failed {
+            return false;
+        }
+        self.secure || self.authenticated
+    }
+
+    /// Per Cl.12.3: secure — principal actor signals MACsec is active.
+    pub fn secure(&self) -> bool {
+        self.secure
+    }
+
+    /// Per Cl.12.3: authenticated — principal actor signals authentication succeeded.
+    pub fn authenticated(&self) -> bool {
+        self.authenticated
+    }
+
+    /// Per Cl.12.3: failed — all actors have failed.
+    pub fn failed(&self) -> bool {
+        self.failed
+    }
+
+    /// Per Cl.12.3: newInfo — state change notification flag.
+    pub fn new_info(&self) -> bool {
+        self.new_info
+    }
+
+    /// Per Cl.12.3: set the secure signal from the principal actor.
+    ///
+    /// When secure changes, updates `new_info` and recomputes CP state.
+    pub fn set_secure(&mut self, value: bool) {
+        if self.secure != value {
+            self.secure = value;
+            self.new_info = true;
+            self.recompute_state();
+        }
+    }
+
+    /// Per Cl.12.3: set the authenticated signal from the principal actor.
+    ///
+    /// When authenticated changes, updates `new_info` and recomputes CP state.
+    pub fn set_authenticated(&mut self, value: bool) {
+        if self.authenticated != value {
+            self.authenticated = value;
+            self.new_info = true;
+            self.recompute_state();
+        }
+    }
+
+    /// Per Cl.12.3: set the failed signal from the principal actor.
+    ///
+    /// When failed changes, updates `new_info` and recomputes CP state.
+    pub fn set_failed(&mut self, value: bool) {
+        if self.failed != value {
+            self.failed = value;
+            self.new_info = true;
+            self.recompute_state();
+        }
+    }
+
+    /// Per Cl.12.3: clear the newInfo flag after the consumer has read it.
+    pub fn clear_new_info(&mut self) {
+        self.new_info = false;
+    }
+
+    /// Recompute CP state from interface variables per Cl.12.3.
+    ///
+    /// Priority: failed > secure > authenticated.
+    /// - failed=TRUE → Disabled
+    /// - secure=TRUE → Secured
+    /// - authenticated=TRUE → Unsecured
+    /// - else → Disabled
+    fn recompute_state(&mut self) {
+        let new_state = if self.failed {
+            CpState::Disabled
+        } else if self.secure {
+            CpState::Secured
+        } else if self.authenticated {
+            CpState::Unsecured
+        } else {
+            CpState::Disabled
+        };
+
+        if self.state != new_state {
+            // Clear secure channel when leaving Secured
+            if self.state == CpState::Secured && new_state != CpState::Secured {
+                self.secure_channel = None;
+                self.current_sa = None;
+            }
+            self.state = new_state;
+        }
+    }
+
     fn enable_unsecured(&mut self) -> Result<Vec<CpTransition>, crate::PaeError> {
         match self.state {
             CpState::Disabled => {
+                self.authenticated = true;
+                self.new_info = true;
                 self.state = CpState::Unsecured;
                 Ok(vec![CpTransition::ToUnsecured {
                     port_id: self.port_id,
@@ -225,12 +340,17 @@ impl CpStateMachine {
         match self.state {
             CpState::Disabled => Ok(vec![]), // Already disabled, no-op
             CpState::Unsecured => {
+                self.authenticated = false;
+                self.new_info = true;
                 self.state = CpState::Disabled;
                 Ok(vec![CpTransition::ToDisabled {
                     port_id: self.port_id,
                 }])
             }
             CpState::Secured => {
+                self.secure = false;
+                self.authenticated = false;
+                self.new_info = true;
                 self.secure_channel = None;
                 self.current_sa = None;
                 self.state = CpState::Disabled;
@@ -254,6 +374,8 @@ impl CpStateMachine {
             }),
             CpState::Unsecured => {
                 let an = sak.an();
+                self.secure = true;
+                self.new_info = true;
                 self.secure_channel = Some(SecureChannel::new(sci, cipher_suite));
                 self.current_sa = Some(SecureAssociation::new(an));
                 self.state = CpState::Secured;
@@ -264,6 +386,7 @@ impl CpStateMachine {
             CpState::Secured => {
                 // Replace SAK in already-secured state (SAK rekey)
                 let an = sak.an();
+                self.new_info = true;
                 self.current_sa = Some(SecureAssociation::new(an));
                 Ok(vec![CpTransition::SakRekeyed {
                     port_id: self.port_id,
@@ -275,6 +398,8 @@ impl CpStateMachine {
     fn retire_sak(&mut self) -> Result<Vec<CpTransition>, crate::PaeError> {
         match self.state {
             CpState::Secured => {
+                self.secure = false;
+                self.new_info = true;
                 self.current_sa = None;
                 self.secure_channel = None;
                 self.state = CpState::Unsecured;
@@ -628,5 +753,204 @@ mod tests {
         cp.handle_event(CpEvent::EnableUnsecured).unwrap();
         assert!(cp.is_operational());
         assert!(!cp.is_macsec_active());
+    }
+
+    // --- REQ-F-CP-002: CP State Machine Interface (Clause 12.3) ---
+
+    /// Verifies: #30 (REQ-F-CP-002)
+    /// Per IEEE 802.1X-2020, Clause 12.3.
+    /// controlledPortEnabled is FALSE in Disabled state.
+    #[test]
+    fn test_cp_controlled_port_disabled() {
+        let cp = CpStateMachine::new(1);
+        assert!(!cp.controlled_port_enabled());
+    }
+
+    /// Verifies: #30 (REQ-F-CP-002)
+    /// Per IEEE 802.1X-2020, Clause 12.3.
+    /// controlledPortEnabled is TRUE in Unsecured state (authenticated without MACsec).
+    #[test]
+    fn test_cp_controlled_port_unsecured() {
+        let mut cp = CpStateMachine::new(1);
+        cp.set_authenticated(true);
+        assert!(cp.controlled_port_enabled());
+        assert!(!cp.secure());
+    }
+
+    /// Verifies: #30 (REQ-F-CP-002)
+    /// Per IEEE 802.1X-2020, Clause 12.3.
+    /// When secure=TRUE, controlledPortEnabled is TRUE and MACsec is enabled.
+    #[test]
+    fn test_cp_controlled_port_secured() {
+        let mut cp = CpStateMachine::new(1);
+        cp.set_authenticated(true);
+        cp.set_secure(true);
+        assert!(cp.controlled_port_enabled());
+        assert!(cp.secure());
+    }
+
+    /// Verifies: #30 (REQ-F-CP-002)
+    /// Per IEEE 802.1X-2020, Clause 12.3.
+    /// When failed=TRUE, controlledPortEnabled is cleared.
+    #[test]
+    fn test_cp_controlled_port_failed() {
+        let mut cp = CpStateMachine::new(1);
+        cp.set_authenticated(true);
+        assert!(cp.controlled_port_enabled());
+
+        cp.set_failed(true);
+        assert!(!cp.controlled_port_enabled());
+    }
+
+    /// Verifies: #30 (REQ-F-CP-002)
+    /// Per IEEE 802.1X-2020, Clause 12.3.
+    /// newInfo is set when CP state changes and cleared after read.
+    #[test]
+    fn test_cp_new_info_on_transition() {
+        let mut cp = CpStateMachine::new(1);
+        assert!(!cp.new_info());
+
+        cp.set_authenticated(true);
+        assert!(cp.new_info());
+
+        // Clear after read
+        cp.clear_new_info();
+        assert!(!cp.new_info());
+    }
+
+    /// Verifies: #30 (REQ-F-CP-002)
+    /// Per IEEE 802.1X-2020, Clause 12.3.
+    /// secure starts FALSE and becomes TRUE when principal actor is secured.
+    #[test]
+    fn test_cp_secure_interface_variable() {
+        let cp = CpStateMachine::new(1);
+        assert!(!cp.secure());
+
+        let mut cp = CpStateMachine::new(1);
+        cp.set_secure(true);
+        assert!(cp.secure());
+    }
+
+    /// Verifies: #30 (REQ-F-CP-002)
+    /// Per IEEE 802.1X-2020, Clause 12.3.
+    /// authenticated starts FALSE and becomes TRUE when principal actor authenticates.
+    #[test]
+    fn test_cp_authenticated_interface_variable() {
+        let cp = CpStateMachine::new(1);
+        assert!(!cp.authenticated());
+
+        let mut cp = CpStateMachine::new(1);
+        cp.set_authenticated(true);
+        assert!(cp.authenticated());
+    }
+
+    /// Verifies: #30 (REQ-F-CP-002)
+    /// Per IEEE 802.1X-2020, Clause 12.3.
+    /// failed starts FALSE and becomes TRUE when all actors have failed.
+    #[test]
+    fn test_cp_failed_interface_variable() {
+        let cp = CpStateMachine::new(1);
+        assert!(!cp.failed());
+
+        let mut cp = CpStateMachine::new(1);
+        cp.set_failed(true);
+        assert!(cp.failed());
+    }
+
+    /// Verifies: #30 (REQ-F-CP-002)
+    /// Per IEEE 802.1X-2020, Clause 12.3.
+    /// secure=TRUE implies controlledPortEnabled=TRUE regardless of authenticated.
+    #[test]
+    fn test_cp_secure_implies_enabled() {
+        let mut cp = CpStateMachine::new(1);
+        cp.set_secure(true);
+        assert!(cp.controlled_port_enabled());
+    }
+
+    /// Verifies: #30 (REQ-F-CP-002)
+    /// Per IEEE 802.1X-2020, Clause 12.3.
+    /// failed=TRUE clears controlledPortEnabled even if secure was TRUE.
+    #[test]
+    fn test_cp_failed_overrides_secure() {
+        let mut cp = CpStateMachine::new(1);
+        cp.set_secure(true);
+        assert!(cp.controlled_port_enabled());
+
+        cp.set_failed(true);
+        assert!(!cp.controlled_port_enabled());
+    }
+
+    /// Verifies: #30 (REQ-F-CP-002)
+    /// Per IEEE 802.1X-2020, Clause 12.3.
+    /// Clearing failed allows controlledPortEnabled to reflect secure/authenticated again.
+    #[test]
+    fn test_cp_clear_failed_restores_state() {
+        let mut cp = CpStateMachine::new(1);
+        cp.set_secure(true);
+        cp.set_failed(true);
+        assert!(!cp.controlled_port_enabled());
+
+        cp.set_failed(false);
+        assert!(cp.controlled_port_enabled());
+    }
+
+    /// Verifies: #30 (REQ-F-CP-002)
+    /// Per IEEE 802.1X-2020, Clause 12.3.
+    /// newInfo is set when secure changes.
+    #[test]
+    fn test_cp_new_info_on_secure_change() {
+        let mut cp = CpStateMachine::new(1);
+        cp.set_authenticated(true);
+        cp.clear_new_info();
+
+        cp.set_secure(true);
+        assert!(cp.new_info());
+    }
+
+    /// Verifies: #30 (REQ-F-CP-002)
+    /// Per IEEE 802.1X-2020, Clause 12.3.
+    /// newInfo is set when failed changes.
+    #[test]
+    fn test_cp_new_info_on_failed_change() {
+        let mut cp = CpStateMachine::new(1);
+        cp.set_authenticated(true);
+        cp.clear_new_info();
+
+        cp.set_failed(true);
+        assert!(cp.new_info());
+    }
+
+    /// Verifies: #30 (REQ-F-CP-002)
+    /// Per IEEE 802.1X-2020, Clause 12.3.
+    /// CpState reflects interface variables: secure→Secured, authenticated→Unsecured, failed→Disabled.
+    #[test]
+    fn test_cp_state_reflects_interface() {
+        let mut cp = CpStateMachine::new(1);
+        assert_eq!(cp.state(), CpState::Disabled);
+
+        cp.set_authenticated(true);
+        assert_eq!(cp.state(), CpState::Unsecured);
+
+        cp.set_secure(true);
+        assert_eq!(cp.state(), CpState::Secured);
+
+        cp.set_failed(true);
+        assert_eq!(cp.state(), CpState::Disabled);
+    }
+
+    /// Verifies: #30 (REQ-F-CP-002)
+    /// Per IEEE 802.1X-2020, Clause 12.3.
+    /// CpState is Unsecured when authenticated=TRUE and secure=FALSE.
+    #[test]
+    fn test_cp_state_unsecured_when_authenticated_not_secure() {
+        let mut cp = CpStateMachine::new(1);
+        cp.set_secure(true);
+        cp.set_secure(false);
+        // secure=FALSE, authenticated defaults to FALSE, so state is Disabled
+        assert_eq!(cp.state(), CpState::Disabled);
+
+        cp.set_authenticated(true);
+        // authenticated=TRUE, secure=FALSE → Unsecured
+        assert_eq!(cp.state(), CpState::Unsecured);
     }
 }
