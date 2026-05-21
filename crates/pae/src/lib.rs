@@ -9,7 +9,7 @@
 //! - PAE port state definitions
 //! - Protocol timer wheel
 //!
-//! Implements: #19 (REQ-F-MKA-001), #20 (REQ-F-MKA-002), #23 (REQ-F-MKA-005), #25 (REQ-F-MKA-007), #27 (REQ-F-MKA-009), #28 (REQ-F-MKA-010), #29 (REQ-F-CP-001), #47 (REQ-F-EAPOL-004)
+//! Implements: #19 (REQ-F-MKA-001), #20 (REQ-F-MKA-002), #23 (REQ-F-MKA-005), #25 (REQ-F-MKA-007), #27 (REQ-F-MKA-009), #28 (REQ-F-MKA-010), #29 (REQ-F-CP-001), #30 (REQ-F-CP-002), #31 (REQ-F-CP-003), #32 (REQ-F-CP-004), #47 (REQ-F-EAPOL-004)
 //! Architecture: #74 (ADR-SM-002), #76 (ADR-SEC-004), #80 (ADR-KDF-008)
 
 #![warn(missing_docs)]
