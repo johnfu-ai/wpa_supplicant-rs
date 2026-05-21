@@ -45,7 +45,10 @@ pub enum CpEvent {
 
 /// Secure Channel — represents an active MACsec secure channel.
 ///
-/// Per IEEE 802.1X-2020, Clause 10.
+/// Per IEEE 802.1X-2020, Clause 9.10.
+/// Tracks the number of active SAs (at most 4: AN 0-3).
+///
+/// Implements: #31 (REQ-F-CP-003: Secure Channel/SA Management)
 #[derive(Debug, Clone)]
 pub struct SecureChannel {
     /// SCI for this channel.
@@ -54,6 +57,8 @@ pub struct SecureChannel {
     cipher_suite: CipherSuite,
     /// Channel offset for XPN mode.
     offset: u64,
+    /// Number of active SAs in this channel.
+    active_sa_count: usize,
 }
 
 impl SecureChannel {
@@ -63,6 +68,7 @@ impl SecureChannel {
             sci,
             cipher_suite,
             offset: 0,
+            active_sa_count: 1,
         }
     }
 
@@ -80,11 +86,19 @@ impl SecureChannel {
     pub fn offset(&self) -> u64 {
         self.offset
     }
+
+    /// Number of active SAs in this channel.
+    pub fn active_sa_count(&self) -> usize {
+        self.active_sa_count
+    }
 }
 
 /// Secure Association — represents a SAK within a Secure Channel.
 ///
-/// Per IEEE 802.1X-2020, Clause 10.
+/// Per IEEE 802.1X-2020, Clause 9.10.
+/// Lifecycle: receive-only → receive+transmit → retired.
+///
+/// Implements: #31 (REQ-F-CP-003: Secure Channel/SA Management)
 #[derive(Debug, Clone)]
 pub struct SecureAssociation {
     /// Association Number (AN), 0-3.
@@ -93,15 +107,21 @@ pub struct SecureAssociation {
     receiving: bool,
     /// Whether this SA is transmitting.
     transmitting: bool,
+    /// Whether this SA has been retired.
+    retired: bool,
 }
 
 impl SecureAssociation {
-    /// Create a new secure association.
+    /// Create a new secure association in receive-only mode.
+    ///
+    /// Per Cl.9.10: SAK install enables receive first.
+    /// Transmit is enabled after Key Server distributes SAKuse parameters.
     pub fn new(an: u8) -> Self {
         Self {
             an,
             receiving: true,
-            transmitting: true,
+            transmitting: false,
+            retired: false,
         }
     }
 
@@ -118,6 +138,27 @@ impl SecureAssociation {
     /// Whether this SA is transmitting.
     pub fn is_transmitting(&self) -> bool {
         self.transmitting
+    }
+
+    /// Whether this SA has been retired.
+    pub fn is_retired(&self) -> bool {
+        self.retired
+    }
+
+    /// Enable transmit on this SA. Per Cl.9.10.
+    ///
+    /// Called after Key Server distributes SAKuse parameters.
+    pub fn enable_transmit(&mut self) {
+        self.transmitting = true;
+    }
+
+    /// Retire this SA. Per Cl.9.10.
+    ///
+    /// Called when SAK Retire timer expires. Clears both receive and transmit.
+    pub fn retire(&mut self) {
+        self.receiving = false;
+        self.transmitting = false;
+        self.retired = true;
     }
 }
 
@@ -143,6 +184,8 @@ pub struct CpStateMachine {
     secure_channel: Option<SecureChannel>,
     /// Current Secure Association (if SAK installed).
     current_sa: Option<SecureAssociation>,
+    /// Old Secure Association pending retirement (SAK rekey scenario).
+    old_sa: Option<SecureAssociation>,
     /// Per Cl.12.3: principal actor signals MACsec is active.
     secure: bool,
     /// Per Cl.12.3: principal actor signals authentication succeeded.
@@ -161,6 +204,7 @@ impl CpStateMachine {
             port_id,
             secure_channel: None,
             current_sa: None,
+            old_sa: None,
             secure: false,
             authenticated: false,
             failed: false,
@@ -290,6 +334,43 @@ impl CpStateMachine {
         self.new_info = false;
     }
 
+    // --- REQ-F-CP-003: Secure Channel/SA Management (Clause 9.10, #31) ---
+
+    /// Old Secure Association pending retirement, if any.
+    ///
+    /// Per Cl.9.10: after SAK rekey, the old SA remains until SAK Retire timer expires.
+    pub fn old_sa(&self) -> Option<&SecureAssociation> {
+        self.old_sa.as_ref()
+    }
+
+    /// Number of old SAs pending retirement.
+    pub fn old_sa_count(&self) -> usize {
+        if self.old_sa.is_some() {
+            1
+        } else {
+            0
+        }
+    }
+
+    /// Enable transmit on the current SA for the specified AN.
+    ///
+    /// Per Cl.9.10: called after Key Server distributes SAKuse parameters.
+    ///
+    /// # Errors
+    /// Returns `PaeError::InvalidTransition` if no SA is installed or AN doesn't match.
+    pub fn enable_sa_transmit(&mut self, an: u8) -> Result<(), crate::PaeError> {
+        if let Some(ref mut sa) = self.current_sa {
+            if sa.an() == an {
+                sa.enable_transmit();
+                return Ok(());
+            }
+        }
+        Err(crate::PaeError::InvalidTransition {
+            from: format!("AN={}", an),
+            to: "transmit enabled".into(),
+        })
+    }
+
     /// Recompute CP state from interface variables per Cl.12.3.
     ///
     /// Priority: failed > secure > authenticated.
@@ -313,6 +394,7 @@ impl CpStateMachine {
             if self.state == CpState::Secured && new_state != CpState::Secured {
                 self.secure_channel = None;
                 self.current_sa = None;
+                self.old_sa = None;
             }
             self.state = new_state;
         }
@@ -353,6 +435,7 @@ impl CpStateMachine {
                 self.new_info = true;
                 self.secure_channel = None;
                 self.current_sa = None;
+                self.old_sa = None;
                 self.state = CpState::Disabled;
                 Ok(vec![CpTransition::ToDisabled {
                     port_id: self.port_id,
@@ -384,9 +467,14 @@ impl CpStateMachine {
                 }])
             }
             CpState::Secured => {
-                // Replace SAK in already-secured state (SAK rekey)
+                // SAK rekey: retire current SA, install new one
                 let an = sak.an();
                 self.new_info = true;
+                // Move current SA to old_sa (pending retirement)
+                if let Some(mut old) = self.current_sa.take() {
+                    old.retire();
+                    self.old_sa = Some(old);
+                }
                 self.current_sa = Some(SecureAssociation::new(an));
                 Ok(vec![CpTransition::SakRekeyed {
                     port_id: self.port_id,
@@ -398,6 +486,13 @@ impl CpStateMachine {
     fn retire_sak(&mut self) -> Result<Vec<CpTransition>, crate::PaeError> {
         match self.state {
             CpState::Secured => {
+                // If there's an old SA pending retirement, remove it
+                if self.old_sa.is_some() {
+                    self.old_sa = None;
+                    // Stay in Secured — current SA is still active
+                    return Ok(vec![]);
+                }
+                // No old SA: retire the current SA and fall back to Unsecured
                 self.secure = false;
                 self.new_info = true;
                 self.current_sa = None;
@@ -695,7 +790,7 @@ mod tests {
         let sa = cp.current_sa().expect("secure association should exist");
         assert_eq!(sa.an(), 2);
         assert!(sa.is_receiving());
-        assert!(sa.is_transmitting());
+        assert!(!sa.is_transmitting());
     }
 
     /// Verifies: #29 (REQ-F-CP-001)
@@ -952,5 +1047,216 @@ mod tests {
         cp.set_authenticated(true);
         // authenticated=TRUE, secure=FALSE → Unsecured
         assert_eq!(cp.state(), CpState::Unsecured);
+    }
+
+    // --- REQ-F-CP-003: Secure Channel/SA Management (Clause 9.10) ---
+
+    /// Verifies: #31 (REQ-F-CP-003)
+    /// Per IEEE 802.1X-2020, Clause 9.10.
+    /// New SA starts with receive=TRUE, transmit=FALSE (receive-only first).
+    #[test]
+    fn test_sa_new_receive_only() {
+        let sa = SecureAssociation::new(0);
+        assert!(sa.is_receiving());
+        assert!(
+            !sa.is_transmitting(),
+            "new SA should be receive-only initially"
+        );
+    }
+
+    /// Verifies: #31 (REQ-F-CP-003)
+    /// Per IEEE 802.1X-2020, Clause 9.10.
+    /// SA can be promoted to transmit after Key Server distributes SAKuse.
+    #[test]
+    fn test_sa_enable_transmit() {
+        let mut sa = SecureAssociation::new(0);
+        assert!(!sa.is_transmitting());
+        sa.enable_transmit();
+        assert!(sa.is_transmitting());
+        assert!(sa.is_receiving(), "receiving should remain TRUE");
+    }
+
+    /// Verifies: #31 (REQ-F-CP-003)
+    /// Per IEEE 802.1X-2020, Clause 9.10.
+    /// SA can be retired (both receive and transmit cleared).
+    #[test]
+    fn test_sa_retire() {
+        let mut sa = SecureAssociation::new(2);
+        sa.enable_transmit();
+        sa.retire();
+        assert!(!sa.is_receiving());
+        assert!(!sa.is_transmitting());
+        assert!(sa.is_retired());
+    }
+
+    /// Verifies: #31 (REQ-F-CP-003)
+    /// Per IEEE 802.1X-2020, Clause 9.10.
+    /// CP can track old SA pending retirement alongside new SA.
+    #[test]
+    fn test_cp_sak_rekey_retires_old_sa() {
+        let mut cp = CpStateMachine::new(1);
+        cp.handle_event(CpEvent::EnableUnsecured).unwrap();
+
+        // Install first SAK (AN=0)
+        let sak0 = Sak::from_bytes(&[0x01; 16], 0).unwrap();
+        let sci = Sci::new([0x02; 6], 1);
+        cp.handle_event(CpEvent::SakAvailable {
+            sak: sak0,
+            sci,
+            cipher_suite: CipherSuite::GcmAes128,
+        })
+        .unwrap();
+        assert_eq!(cp.current_sa().unwrap().an(), 0);
+
+        // Rekey with new SAK (AN=1) — old SA should be pending retirement
+        let sak1 = Sak::from_bytes(&[0x03; 16], 1).unwrap();
+        let sci2 = Sci::new([0x04; 6], 1);
+        cp.handle_event(CpEvent::SakAvailable {
+            sak: sak1,
+            sci: sci2,
+            cipher_suite: CipherSuite::GcmAes128,
+        })
+        .unwrap();
+        assert_eq!(cp.current_sa().unwrap().an(), 1);
+        // Old SA (AN=0) should be pending retirement
+        assert_eq!(cp.old_sa().unwrap().an(), 0);
+        assert!(cp.old_sa().unwrap().is_retired());
+    }
+
+    /// Verifies: #31 (REQ-F-CP-003)
+    /// Per IEEE 802.1X-2020, Clause 9.10.
+    /// SAK retire timer expires — old SA is removed from the SC.
+    #[test]
+    fn test_cp_sak_retire_removes_old_sa() {
+        let mut cp = CpStateMachine::new(1);
+        cp.handle_event(CpEvent::EnableUnsecured).unwrap();
+
+        let sak0 = Sak::from_bytes(&[0x01; 16], 0).unwrap();
+        let sci = Sci::new([0x02; 6], 1);
+        cp.handle_event(CpEvent::SakAvailable {
+            sak: sak0,
+            sci,
+            cipher_suite: CipherSuite::GcmAes128,
+        })
+        .unwrap();
+
+        let sak1 = Sak::from_bytes(&[0x03; 16], 1).unwrap();
+        let sci2 = Sci::new([0x04; 6], 1);
+        cp.handle_event(CpEvent::SakAvailable {
+            sak: sak1,
+            sci: sci2,
+            cipher_suite: CipherSuite::GcmAes128,
+        })
+        .unwrap();
+        assert!(cp.old_sa().is_some());
+
+        // SAK retire timer fires — old SA removed
+        cp.handle_event(CpEvent::SakRetireExpired).unwrap();
+        assert!(
+            cp.old_sa().is_none(),
+            "old SA should be removed after retire"
+        );
+        // Current SA should still be active
+        assert_eq!(cp.current_sa().unwrap().an(), 1);
+        // State should remain Secured
+        assert_eq!(cp.state(), CpState::Secured);
+    }
+
+    /// Verifies: #31 (REQ-F-CP-003)
+    /// Per IEEE 802.1X-2020, Clause 9.10.
+    /// SAK install enables receive then transmit for the specified AN.
+    #[test]
+    fn test_cp_sak_install_receive_then_transmit() {
+        let mut cp = CpStateMachine::new(1);
+        cp.handle_event(CpEvent::EnableUnsecured).unwrap();
+
+        let sak = Sak::from_bytes(&[0x01; 16], 2).unwrap();
+        let sci = Sci::new([0xAA; 6], 1);
+        cp.handle_event(CpEvent::SakAvailable {
+            sak,
+            sci,
+            cipher_suite: CipherSuite::GcmAes128,
+        })
+        .unwrap();
+
+        // After install: receive=TRUE, transmit=FALSE (per Cl.9.10)
+        let sa = cp.current_sa().unwrap();
+        assert!(sa.is_receiving());
+        assert!(
+            !sa.is_transmitting(),
+            "transmit should be FALSE until SAKuse distributed"
+        );
+
+        // Key Server distributes SAKuse → enable transmit
+        cp.enable_sa_transmit(2);
+        let sa = cp.current_sa().unwrap();
+        assert!(sa.is_transmitting());
+    }
+
+    /// Verifies: #31 (REQ-F-CP-003)
+    /// Per IEEE 802.1X-2020, Clause 9.10.
+    /// SecureChannel tracks its active and pending-retirement SAs.
+    #[test]
+    fn test_cp_secure_channel_sa_count() {
+        let mut cp = CpStateMachine::new(1);
+        cp.handle_event(CpEvent::EnableUnsecured).unwrap();
+
+        let sak = Sak::from_bytes(&[0x01; 16], 0).unwrap();
+        let sci = Sci::new([0x02; 6], 1);
+        cp.handle_event(CpEvent::SakAvailable {
+            sak,
+            sci,
+            cipher_suite: CipherSuite::GcmAes128,
+        })
+        .unwrap();
+        // 1 active SA, 0 old SAs
+        assert_eq!(cp.secure_channel().unwrap().active_sa_count(), 1);
+        assert_eq!(cp.old_sa_count(), 0);
+
+        // Rekey
+        let sak1 = Sak::from_bytes(&[0x03; 16], 1).unwrap();
+        let sci2 = Sci::new([0x04; 6], 1);
+        cp.handle_event(CpEvent::SakAvailable {
+            sak: sak1,
+            sci: sci2,
+            cipher_suite: CipherSuite::GcmAes128,
+        })
+        .unwrap();
+        // 1 active SA, 1 old SA pending retirement
+        assert_eq!(cp.secure_channel().unwrap().active_sa_count(), 1);
+        assert_eq!(cp.old_sa_count(), 1);
+    }
+
+    /// Verifies: #31 (REQ-F-CP-003)
+    /// Per IEEE 802.1X-2020, Clause 9.10.
+    /// AN must be in range 0-3.
+    #[test]
+    fn test_sa_an_range() {
+        assert!(SecureAssociation::new(0).an() == 0);
+        assert!(SecureAssociation::new(3).an() == 3);
+    }
+
+    /// Verifies: #31 (REQ-F-CP-003)
+    /// Per IEEE 802.1X-2020, Clause 9.10.
+    /// SA has a retired state that indicates it is no longer in use.
+    #[test]
+    fn test_sa_state_lifecycle() {
+        let mut sa = SecureAssociation::new(1);
+        // Initial: receive-only
+        assert!(sa.is_receiving());
+        assert!(!sa.is_transmitting());
+        assert!(!sa.is_retired());
+
+        // After transmit enabled: full operation
+        sa.enable_transmit();
+        assert!(sa.is_receiving());
+        assert!(sa.is_transmitting());
+        assert!(!sa.is_retired());
+
+        // After retire: no longer active
+        sa.retire();
+        assert!(!sa.is_receiving());
+        assert!(!sa.is_transmitting());
+        assert!(sa.is_retired());
     }
 }
