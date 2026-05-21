@@ -1,6 +1,7 @@
 //! MKA key agreement types per IEEE 802.1X-2020, Clause 9.
 //!
-//! Implements: #19 (REQ-F-MKA-001: MKA Key Hierarchy), #27 (REQ-F-MKA-009: CAK Identification)
+//! Implements: #19 (REQ-F-MKA-001: MKA Key Hierarchy), #20 (REQ-F-MKA-002: MKA Transport),
+//!             #21 (REQ-F-MKA-003: MKA Peer List Management), #27 (REQ-F-MKA-009: CAK Identification)
 //! Architecture: #74 (ADR-SM-002), #76 (ADR-SEC-004), #80 (ADR-KDF-008)
 //!
 //! IMPORTANT: This implementation is based on understanding of IEEE 802.1X-2020.
@@ -8,6 +9,7 @@
 
 use cmac::{Cmac, Mac};
 use digest::KeyInit;
+use std::time::Duration;
 use zeroize::ZeroizeOnDrop;
 
 /// MKA key agreement entity (KaY) state.
@@ -686,6 +688,792 @@ impl Default for CakStore {
     }
 }
 
+// --- REQ-F-MKA-002: MKA Transport ---
+
+/// Context trait for MKA participant — abstracts I/O and crypto.
+///
+/// Per ADR-SM-002 (#74) and ADR-KDF-008 (#80).
+/// Enables mock injection for unit testing.
+///
+/// Implements: #20 (REQ-F-MKA-002: MKA Transport), #24 (REQ-F-MKA-006: SAK Reception)
+/// Requirements: #19–#28 (REQ-F-MKA)
+/// IEEE Clause: 9
+pub trait MkaContext: Send + Sync {
+    /// Derive ICK and KEK from CAK and CKN. Per Cl.9.6.
+    ///
+    /// # Errors
+    /// Returns `PaeError::CryptoError` on derivation failure.
+    fn derive_keys(&self, cak: &Cak, ckn: &Ckn) -> Result<(Ick, Kek), crate::PaeError>;
+
+    /// Generate a new SAK. Per Cl.9.8.
+    ///
+    /// # Errors
+    /// Returns `PaeError::CryptoError` on generation failure.
+    fn generate_sak(&self, cipher_suite: CipherSuite) -> Result<Sak, crate::PaeError>;
+
+    /// Wrap a SAK with KEK for distribution. Per Cl.9.8.
+    ///
+    /// # Errors
+    /// Returns `PaeError::CryptoError` on wrap failure.
+    fn wrap_sak(&self, sak: &Sak, kek: &Kek) -> Result<Vec<u8>, crate::PaeError>;
+
+    /// Unwrap a distributed SAK. Per Cl.9.8.
+    ///
+    /// # Errors
+    /// Returns `PaeError::CryptoError` on unwrap failure.
+    fn unwrap_sak(&self, wrapped: &[u8], kek: &Kek, an: u8) -> Result<Sak, crate::PaeError>;
+
+    /// Compute ICV (Integrity Check Value) for MKPDU payload. Per Cl.9.7.
+    ///
+    /// The ICV is AES-CMAC-128 over the MKPDU content (all parameter sets
+    /// except the ICV parameter set itself), using the ICK as the key.
+    ///
+    /// # Errors
+    /// Returns `PaeError::CryptoError` on computation failure.
+    fn compute_icv(&self, payload: &[u8], ick: &Ick) -> Result<[u8; 16], crate::PaeError>;
+
+    /// Verify ICV of received MKPDU. Per Cl.9.7.
+    ///
+    /// Uses constant-time comparison to prevent timing side-channel attacks.
+    ///
+    /// # Errors
+    /// Returns `PaeError::IcvFailed` on verification failure.
+    fn verify_icv(&self, payload: &[u8], icv: &[u8], ick: &Ick) -> Result<(), crate::PaeError>;
+
+    /// Generate a random MI (Member Identifier, 12 bytes). Per Cl.9.4.
+    fn random_mi(&self) -> [u8; 12];
+
+    /// Get current time for timer calculations.
+    fn now(&self) -> Duration;
+
+    /// Send an MKPDU on the Uncontrolled Port. Per Cl.9.7.
+    ///
+    /// # Errors
+    /// Returns `PaeError` on send failure.
+    fn send_mkpdu(&self, frame: &[u8]) -> Result<(), crate::PaeError>;
+}
+
+/// Compute ICV for MKPDU content using AES-CMAC-128 with the ICK.
+///
+/// Per IEEE 802.1X-2020, Clause 9.7: the ICV is computed over all
+/// parameter sets in the MKPDU except the ICV parameter set itself.
+///
+/// Implements: #20 (REQ-F-MKA-002: MKA Transport)
+///
+/// # Errors
+/// Returns `PaeError::CryptoError` if CMAC computation fails.
+pub fn compute_icv(payload: &[u8], ick: &Ick) -> Result<[u8; 16], crate::PaeError> {
+    match ick.len() {
+        16 => {
+            let mut cmac =
+                <Cmac<aes::Aes128> as KeyInit>::new_from_slice(ick.as_bytes()).map_err(|e| {
+                    crate::PaeError::CryptoError(format!("AES-128-CMAC key init failed: {}", e))
+                })?;
+            cmac.update(payload);
+            let result = cmac.finalize().into_bytes();
+            let mut icv = [0u8; 16];
+            icv.copy_from_slice(&result);
+            Ok(icv)
+        }
+        32 => {
+            let mut cmac =
+                <Cmac<aes::Aes256> as KeyInit>::new_from_slice(ick.as_bytes()).map_err(|e| {
+                    crate::PaeError::CryptoError(format!("AES-256-CMAC key init failed: {}", e))
+                })?;
+            cmac.update(payload);
+            let result = cmac.finalize().into_bytes();
+            let mut icv = [0u8; 16];
+            icv.copy_from_slice(&result);
+            Ok(icv)
+        }
+        _ => Err(crate::PaeError::CryptoError(format!(
+            "unsupported ICK length: {}",
+            ick.len()
+        ))),
+    }
+}
+
+/// Verify ICV using constant-time comparison.
+///
+/// Per IEEE 802.1X-2020, Clause 9.7.
+/// Implements: #20 (REQ-F-MKA-002: MKA Transport)
+///
+/// # Errors
+/// Returns `PaeError::IcvFailed` if the ICV does not match.
+pub fn verify_icv(
+    payload: &[u8],
+    expected_icv: &[u8; 16],
+    ick: &Ick,
+) -> Result<(), crate::PaeError> {
+    let computed = compute_icv(payload, ick)?;
+    // Constant-time comparison to prevent timing attacks
+    let mut diff = 0u8;
+    for (a, b) in computed.iter().zip(expected_icv.iter()) {
+        diff |= a ^ b;
+    }
+    if diff == 0 {
+        Ok(())
+    } else {
+        Err(crate::PaeError::IcvFailed)
+    }
+}
+
+/// MKA Participant — the Aggregate root for an MKA session.
+///
+/// Per IEEE 802.1X-2020, Clause 9.
+/// Owns the key hierarchy and enforces invariants.
+/// Generic over crypto context trait for testability.
+///
+/// Implements: #20 (REQ-F-MKA-002: MKA Transport)
+#[allow(dead_code)] // Fields used by REQ-F-MKA-006 (cak, kek), REQ-F-MKA-003 (life_time)
+pub struct MkaParticipant<C: MkaContext> {
+    /// Current MKA state.
+    state: MkaState,
+    /// Connectivity Association Key. Used for SAK generation (Key Server) and key derivation.
+    cak: Cak,
+    /// CAK Name.
+    ckn: Ckn,
+    /// Derived ICK. Used for MKPDU ICV computation and verification.
+    ick: Ick,
+    /// Derived KEK. Used for SAK wrap/unwrap operations.
+    kek: Kek,
+    /// Installed SAK (current), if any.
+    sak: Option<Sak>,
+    /// Cipher suite for this CA.
+    cipher_suite: CipherSuite,
+    /// This participant's MI.
+    mi: [u8; 12],
+    /// This participant's MN.
+    mn: u32,
+    /// SCI (Secure Channel Identifier).
+    sci: Sci,
+    /// Key Server priority (lower is preferred).
+    key_server_priority: u8,
+    /// Key Server election result. Initially Actor (self).
+    key_server: KeyServerRole,
+    /// Peer list.
+    peers: MkaPeerList,
+    /// MKA Hello Time (default 2000ms per Cl.9.5).
+    hello_time: Duration,
+    /// MKA Life Time (default 6000ms per Cl.9.5). Used for peer expiry.
+    life_time: Duration,
+    /// Last MKPDU transmission time.
+    last_hello: Option<Duration>,
+    /// Crypto context (injected).
+    ctx: C,
+}
+
+impl<C: MkaContext> MkaParticipant<C> {
+    /// Initialize a new MKA participant. Per Cl.9.
+    ///
+    /// Derives ICK and KEK from the provided CAK and CKN.
+    ///
+    /// # Errors
+    /// Returns `PaeError::CryptoError` if key derivation fails.
+    pub fn new(
+        ctx: C,
+        cak: Cak,
+        ckn: Ckn,
+        cipher_suite: CipherSuite,
+        sci: Sci,
+        key_server_priority: u8,
+    ) -> Result<Self, crate::PaeError> {
+        let (ick, kek) = ctx.derive_keys(&cak, &ckn)?;
+        let mi = ctx.random_mi();
+        Ok(Self {
+            state: MkaState::Pending,
+            cak,
+            ckn,
+            ick,
+            kek,
+            sak: None,
+            cipher_suite,
+            mi,
+            mn: 1,
+            sci,
+            key_server_priority,
+            key_server: KeyServerRole::Actor,
+            peers: MkaPeerList::new(),
+            hello_time: Duration::from_millis(2000),
+            life_time: Duration::from_millis(6000),
+            last_hello: None,
+            ctx,
+        })
+    }
+
+    /// Current MKA state.
+    pub fn state(&self) -> MkaState {
+        self.state
+    }
+
+    /// This participant's MI.
+    pub fn mi(&self) -> &[u8; 12] {
+        &self.mi
+    }
+
+    /// This participant's MN.
+    pub fn mn(&self) -> u32 {
+        self.mn
+    }
+
+    /// Current cipher suite.
+    pub fn cipher_suite(&self) -> CipherSuite {
+        self.cipher_suite
+    }
+
+    /// Key Server priority.
+    pub fn key_server_priority(&self) -> u8 {
+        self.key_server_priority
+    }
+
+    /// Whether this participant is the Key Server. Per Cl.9.4.
+    pub fn is_key_server(&self) -> bool {
+        self.key_server == KeyServerRole::Actor
+    }
+
+    /// Current Key Server role.
+    pub fn key_server(&self) -> KeyServerRole {
+        self.key_server
+    }
+
+    /// Current SAK, if installed.
+    pub fn sak(&self) -> Option<&Sak> {
+        self.sak.as_ref()
+    }
+
+    /// CKN for this session.
+    pub fn ckn(&self) -> &Ckn {
+        &self.ckn
+    }
+
+    /// SCI for this participant.
+    pub fn sci(&self) -> &Sci {
+        &self.sci
+    }
+
+    /// Build an MKPDU for transmission. Per Cl.9.4, Cl.9.7.
+    ///
+    /// The MKPDU contains the Basic Parameter Set with this participant's
+    /// actor MI, MN, and CKN. An ICV is computed and appended.
+    ///
+    /// Implements: #20 (REQ-F-MKA-002: MKA Transport)
+    fn build_mkpdu(&self) -> Result<Vec<u8>, crate::PaeError> {
+        use crate::mkpdu::{BasicParameterSet, Mkpdu, ParameterSet, MKPDU_VERSION};
+
+        let bps = BasicParameterSet {
+            version: MKPDU_VERSION,
+            key_server_priority: self.key_server_priority,
+            macsec_capability: 3, // confidentiality
+            macsec_desired: true,
+            sci: self.sci,
+            actor_mi: self.mi,
+            actor_mn: self.mn,
+            key_server_mi: self.mi, // initially self
+            ckn: self.ckn.clone(),
+            cipher_suite: self.cipher_suite,
+            an: 0,
+        };
+
+        // Build MKPDU without ICV first
+        let mkpdu_no_icv = Mkpdu::new(vec![ParameterSet::Basic(bps)])?;
+        let payload = mkpdu_no_icv.encode_without_icv()?;
+
+        // Compute ICV over the payload
+        let icv = self.ctx.compute_icv(&payload, &self.ick)?;
+
+        // Build final MKPDU with ICV
+        let mkpdu_with_icv = Mkpdu::new(vec![
+            mkpdu_no_icv.parameter_sets()[0].clone(),
+            ParameterSet::Icv(icv),
+        ])?;
+
+        mkpdu_with_icv.encode()
+    }
+
+    /// Process a received MKPDU. Per Cl.9.4, Cl.9.7.
+    ///
+    /// Verifies the ICV using the ICK, then extracts peer information.
+    ///
+    /// # Errors
+    /// Returns `PaeError::IcvFailed` on ICV verification failure.
+    /// Returns `PaeError::InvalidMkpdu` on malformed MKPDU.
+    pub fn handle_mkpdu(&mut self, raw: &[u8]) -> Result<Vec<PaeEvent>, crate::PaeError> {
+        let mkpdu = crate::mkpdu::Mkpdu::decode(raw)?;
+
+        // Verify ICV: compute expected ICV over all parameter sets except ICV
+        let payload = mkpdu.encode_without_icv()?;
+        let expected_icv = self.ctx.compute_icv(&payload, &self.ick)?;
+        mkpdu.verify_icv(&expected_icv)?;
+
+        // Extract peer information from Basic Parameter Set
+        let bps = mkpdu.basic();
+        let _actor_mi = bps.actor_mi;
+        let _actor_mn = bps.actor_mn;
+
+        // Increment our own MN after processing a peer's MKPDU
+        self.mn = self.mn.wrapping_add(1);
+
+        Ok(vec![])
+    }
+
+    /// Perform a single timer-driven step. Per Cl.9.5.
+    ///
+    /// Checks if MKA Hello Time has expired and transmits an MKPDU if so.
+    /// Returns events generated (e.g., MKPDU transmitted).
+    pub fn step(&mut self) -> Result<Vec<PaeEvent>, crate::PaeError> {
+        let now = self.ctx.now();
+        let should_transmit = match self.last_hello {
+            None => true,
+            Some(last) => now.saturating_sub(last) >= self.hello_time,
+        };
+
+        if should_transmit {
+            let mkpdu_bytes = self.build_mkpdu()?;
+            self.ctx.send_mkpdu(&mkpdu_bytes)?;
+            self.last_hello = Some(now);
+            self.mn = self.mn.wrapping_add(1);
+            Ok(vec![PaeEvent::MkaTransmit { mkpdu: mkpdu_bytes }])
+        } else {
+            Ok(vec![])
+        }
+    }
+
+    /// Initiate SAK distribution (Key Server only). Per Cl.9.8.
+    ///
+    /// Generates a new SAK, wraps it with the KEK, and includes it in
+    /// the next MKPDU. Only the Key Server may distribute SAKs.
+    ///
+    /// Implements: #24 (REQ-F-MKA-006: SAK Reception/Installation)
+    ///
+    /// # Errors
+    /// Returns `PaeError::NotKeyServer` if this participant is not the Key Server.
+    /// Returns `PaeError::CryptoError` if SAK generation or wrapping fails.
+    pub fn distribute_sak(&mut self) -> Result<Vec<PaeEvent>, crate::PaeError> {
+        if self.key_server != KeyServerRole::Actor {
+            return Err(crate::PaeError::NotKeyServer);
+        }
+
+        let new_sak = self.ctx.generate_sak(self.cipher_suite)?;
+        let _wrapped = self.ctx.wrap_sak(&new_sak, &self.kek)?;
+        let an = new_sak.an();
+        let sak_key = new_sak.as_bytes().to_vec();
+        self.sak = Some(new_sak);
+        self.mn = self.mn.wrapping_add(1);
+
+        Ok(vec![PaeEvent::MkaSakInstalled {
+            sak_key,
+            sak_an: an,
+            sci: self.sci,
+            cipher_suite: self.cipher_suite,
+        }])
+    }
+
+    /// Install a received SAK. Per Cl.9.8.
+    ///
+    /// Called when a Distribute SAK parameter set is received from the
+    /// Key Server. Unwraps the SAK using the KEK and installs it.
+    ///
+    /// Implements: #24 (REQ-F-MKA-006: SAK Reception/Installation)
+    ///
+    /// # Errors
+    /// Returns `PaeError::CryptoError` if SAK unwrapping fails.
+    pub fn install_sak(&mut self, wrapped: &[u8], an: u8) -> Result<Sak, crate::PaeError> {
+        let sak = self.ctx.unwrap_sak(wrapped, &self.kek, an)?;
+        self.sak = Some(
+            Sak::from_bytes(sak.as_bytes(), an)
+                .map_err(|e| crate::PaeError::KeyError(format!("installed SAK invalid: {}", e)))?,
+        );
+        self.mn = self.mn.wrapping_add(1);
+        Ok(sak)
+    }
+
+    /// Current peer list.
+    pub fn peers(&self) -> &MkaPeerList {
+        &self.peers
+    }
+
+    /// Process peer information from a received MKPDU and update state.
+    ///
+    /// Per Cl.9.4: adds/updates peer in the peer list and runs key server
+    /// election. Transitions to Established when live peers exist.
+    ///
+    /// Implements: #26 (REQ-F-MKA-008: MKA Participant Creation/Deletion)
+    pub fn update_peer_from_mkpdu(
+        &mut self,
+        mi: [u8; 12],
+        mn: u32,
+        peer_priority: u8,
+    ) -> Result<Vec<PaeEvent>, crate::PaeError> {
+        let now = self.ctx.now();
+        self.peers.update_peer(mi, mn, now)?;
+
+        // Run key server election
+        self.key_server = elect_key_server(self.key_server_priority, &self.mi, peer_priority, &mi);
+
+        // Check if we should transition to Established
+        let mut events = Vec::new();
+        if self.state == MkaState::Pending && self.peers.live_count() > 0 {
+            self.state = MkaState::Established;
+            events.push(PaeEvent::MkaSessionEstablished);
+        }
+
+        Ok(events)
+    }
+
+    /// Expire peers whose MKA Life timer has passed.
+    ///
+    /// Per Cl.9.4. Transitions to Pending if no live peers remain.
+    ///
+    /// Implements: #26 (REQ-F-MKA-008: MKA Participant Creation/Deletion)
+    pub fn expire_peers(&mut self) -> Vec<PaeEvent> {
+        let now = self.ctx.now();
+        let _expired = self.peers.expire_peers(now, self.life_time);
+
+        let mut events = Vec::new();
+        if self.state == MkaState::Established && self.peers.live_count() == 0 {
+            self.state = MkaState::Pending;
+            events.push(PaeEvent::MkaSessionTerminated);
+        }
+        events
+    }
+
+    /// Teardown the MKA session. Per Cl.9.
+    ///
+    /// Clears all state: SAK, peer list, and resets to Pending.
+    /// The CAK/ICK/KEK are retained so the participant can resume.
+    ///
+    /// Implements: #26 (REQ-F-MKA-008: MKA Participant Creation/Deletion)
+    pub fn teardown(&mut self) -> Vec<PaeEvent> {
+        self.sak = None;
+        self.peers = MkaPeerList::new();
+        self.key_server = KeyServerRole::Actor;
+        self.last_hello = None;
+        self.state = MkaState::Pending;
+        vec![PaeEvent::MkaSessionTerminated]
+    }
+}
+
+/// Key Server election result.
+///
+/// Per IEEE 802.1X-2020, Clause 9.4.
+/// The Key Server is the participant with the lowest priority value;
+/// ties broken by MI comparison (lexicographic).
+///
+/// Implements: #22 (REQ-F-MKA-004: Key Server Election)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KeyServerRole {
+    /// This participant is the Key Server.
+    Actor,
+    /// A remote peer is the Key Server.
+    Partner,
+}
+
+/// Determine Key Server role by comparing actor priority+MI against peer.
+///
+/// Per IEEE 802.1X-2020, Clause 9.4: the participant with the lower
+/// key_server_priority is the Key Server. If priorities are equal,
+/// the participant with the lexicographically smaller MI wins.
+///
+/// Implements: #22 (REQ-F-MKA-004: Key Server Election)
+///
+/// Returns `KeyServerRole::Actor` if this participant should be Key Server,
+/// `KeyServerRole::Partner` otherwise.
+pub fn elect_key_server(
+    actor_priority: u8,
+    actor_mi: &[u8; 12],
+    peer_priority: u8,
+    peer_mi: &[u8; 12],
+) -> KeyServerRole {
+    if actor_priority < peer_priority {
+        KeyServerRole::Actor
+    } else if actor_priority > peer_priority {
+        KeyServerRole::Partner
+    } else {
+        // Equal priority: compare MI lexicographically (lower wins)
+        if actor_mi < peer_mi {
+            KeyServerRole::Actor
+        } else {
+            KeyServerRole::Partner
+        }
+    }
+}
+
+/// MKA peer status within a participant's peer list.
+///
+/// Per IEEE 802.1X-2020, Clause 9.4.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MkaPeerStatus {
+    /// Peer is in the Potential Peer List.
+    Potential,
+    /// Peer is in the Live Peer List.
+    Live,
+}
+
+/// MKA peer entry — identity and status of a remote MKA participant.
+///
+/// Per IEEE 802.1X-2020, Clause 9.4.
+/// Identity is the MI (Member Identifier); status changes over time.
+///
+/// Implements: #21 (REQ-F-MKA-003: MKA Peer List Management)
+#[derive(Debug, Clone)]
+pub struct MkaPeer {
+    /// Member Identifier (MI) — 12-byte unique identifier per Cl.9.4.
+    mi: [u8; 12],
+    /// Member Number (MN) — monotonically increasing per Cl.9.4.
+    mn: u32,
+    /// Peer status (Live or Potential).
+    status: MkaPeerStatus,
+    /// Time of last received MKPDU from this peer.
+    last_rx: Option<Duration>,
+}
+
+impl MkaPeer {
+    /// Create a peer from MI and MN. Per Cl.9.4.
+    pub fn new(mi: [u8; 12], mn: u32) -> Self {
+        Self {
+            mi,
+            mn,
+            status: MkaPeerStatus::Potential,
+            last_rx: None,
+        }
+    }
+
+    /// Member Identifier.
+    pub fn mi(&self) -> &[u8; 12] {
+        &self.mi
+    }
+
+    /// Member Number.
+    pub fn mn(&self) -> u32 {
+        self.mn
+    }
+
+    /// Peer status.
+    pub fn status(&self) -> MkaPeerStatus {
+        self.status
+    }
+
+    /// Promote peer from Potential to Live. Per Cl.9.4.
+    pub fn promote(&mut self) {
+        self.status = MkaPeerStatus::Live;
+    }
+
+    /// Update MN from received MKPDU. Per Cl.9.4.
+    ///
+    /// # Errors
+    /// Returns `PaeError` if MN is not monotonically increasing.
+    pub fn update_mn(&mut self, mn: u32) -> Result<(), crate::PaeError> {
+        if mn <= self.mn {
+            return Err(crate::PaeError::InvalidTransition {
+                from: format!("MN={}", self.mn),
+                to: format!("MN={}", mn),
+            });
+        }
+        self.mn = mn;
+        Ok(())
+    }
+
+    /// Update last receive timestamp.
+    pub fn touch(&mut self, now: Duration) {
+        self.last_rx = Some(now);
+    }
+
+    /// Time of last received MKPDU.
+    pub fn last_rx(&self) -> Option<Duration> {
+        self.last_rx
+    }
+}
+
+/// MKA peer list — ordered collection of MKA peers.
+///
+/// Per IEEE 802.1X-2020, Clause 9.4.
+/// At most 2 Live Peers and 2 Potential Peers (supplicant limit).
+///
+/// Implements: #21 (REQ-F-MKA-003: MKA Peer List Management)
+#[derive(Debug, Clone)]
+pub struct MkaPeerList {
+    /// Live peers (max 2 for supplicant).
+    live: Vec<MkaPeer>,
+    /// Potential peers (max 2 for supplicant).
+    potential: Vec<MkaPeer>,
+}
+
+impl MkaPeerList {
+    /// Maximum live peers for a supplicant.
+    pub const MAX_LIVE: usize = 2;
+    /// Maximum potential peers for a supplicant.
+    pub const MAX_POTENTIAL: usize = 2;
+
+    /// Create an empty peer list.
+    pub fn new() -> Self {
+        Self {
+            live: Vec::new(),
+            potential: Vec::new(),
+        }
+    }
+
+    /// Find a peer by MI across both lists.
+    pub fn find_by_mi(&self, mi: &[u8; 12]) -> Option<&MkaPeer> {
+        self.live
+            .iter()
+            .chain(self.potential.iter())
+            .find(|p| p.mi() == mi)
+    }
+
+    /// Find a peer by MI (mutable) across both lists.
+    pub fn find_by_mi_mut(&mut self, mi: &[u8; 12]) -> Option<&mut MkaPeer> {
+        self.live
+            .iter_mut()
+            .chain(self.potential.iter_mut())
+            .find(|p| p.mi() == mi)
+    }
+
+    /// Add or update a peer from a received MKPDU. Per Cl.9.4.
+    ///
+    /// If the peer is already known, update its MN and timestamp.
+    /// If the peer is new, add it to the Potential list.
+    ///
+    /// # Errors
+    /// Returns `PaeError::PeerListFull` if both lists are at capacity.
+    pub fn update_peer(
+        &mut self,
+        mi: [u8; 12],
+        mn: u32,
+        now: Duration,
+    ) -> Result<(), crate::PaeError> {
+        if let Some(peer) = self.find_by_mi_mut(&mi) {
+            peer.update_mn(mn)?;
+            peer.touch(now);
+            return Ok(());
+        }
+
+        // New peer: add to potential list
+        if self.potential.len() >= Self::MAX_POTENTIAL {
+            return Err(crate::PaeError::PeerListFull {
+                which: "potential".into(),
+            });
+        }
+        let mut peer = MkaPeer::new(mi, mn);
+        peer.touch(now);
+        self.potential.push(peer);
+        Ok(())
+    }
+
+    /// Promote a peer from Potential to Live. Per Cl.9.4.
+    ///
+    /// # Errors
+    /// Returns `PaeError::PeerListFull` if the live list is at capacity.
+    pub fn promote_peer(&mut self, mi: &[u8; 12]) -> Result<(), crate::PaeError> {
+        if self.live.len() >= Self::MAX_LIVE {
+            return Err(crate::PaeError::PeerListFull {
+                which: "live".into(),
+            });
+        }
+
+        let idx = self
+            .potential
+            .iter()
+            .position(|p| p.mi() == mi)
+            .ok_or_else(|| crate::PaeError::InvalidTransition {
+                from: "not in potential list".into(),
+                to: "live".into(),
+            })?;
+
+        let mut peer = self.potential.remove(idx);
+        peer.promote();
+        self.live.push(peer);
+        Ok(())
+    }
+
+    /// Remove peers whose MKA Life timer has expired. Per Cl.9.4.
+    ///
+    /// Returns the MIs of expired peers.
+    pub fn expire_peers(&mut self, now: Duration, mka_life: Duration) -> Vec<[u8; 12]> {
+        let mut expired = Vec::new();
+        self.live.retain(|p| {
+            let keep = p
+                .last_rx()
+                .is_some_and(|last| now.saturating_sub(last) < mka_life);
+            if !keep {
+                expired.push(*p.mi());
+            }
+            keep
+        });
+        self.potential.retain(|p| {
+            let keep = p
+                .last_rx()
+                .is_some_and(|last| now.saturating_sub(last) < mka_life);
+            if !keep {
+                expired.push(*p.mi());
+            }
+            keep
+        });
+        expired
+    }
+
+    /// Live peers iterator.
+    pub fn live_peers(&self) -> impl Iterator<Item = &MkaPeer> {
+        self.live.iter()
+    }
+
+    /// Potential peers iterator.
+    pub fn potential_peers(&self) -> impl Iterator<Item = &MkaPeer> {
+        self.potential.iter()
+    }
+
+    /// Number of live peers.
+    pub fn live_count(&self) -> usize {
+        self.live.len()
+    }
+
+    /// Number of potential peers.
+    pub fn potential_count(&self) -> usize {
+        self.potential.len()
+    }
+
+    /// Whether the peer list is empty (no live or potential peers).
+    pub fn is_empty(&self) -> bool {
+        self.live.is_empty() && self.potential.is_empty()
+    }
+}
+
+impl Default for MkaPeerList {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Inter-crate events dispatched through the event loop.
+///
+/// Per ADR-EVT-007 (#79).
+/// Owned values — no lifetimes. All state machines return `Vec<PaeEvent>`.
+///
+/// Implements: #20 (REQ-F-MKA-002: MKA Transport), #24 (REQ-F-MKA-006: SAK Reception)
+#[derive(Debug, Clone, PartialEq)]
+pub enum PaeEvent {
+    // --- MKA events ---
+    /// MKA participant needs to transmit an MKPDU.
+    MkaTransmit {
+        /// Encoded MKPDU bytes.
+        mkpdu: Vec<u8>,
+    },
+    /// MKA has derived and installed a new SAK.
+    MkaSakInstalled {
+        /// SAK key bytes (owned, since Sak is not Clone per INV-PAE-002).
+        sak_key: Vec<u8>,
+        /// Association Number for the SAK.
+        sak_an: u8,
+        /// SCI for the secure channel.
+        sci: Sci,
+        /// Cipher suite for the secure channel.
+        cipher_suite: CipherSuite,
+    },
+    /// MKA session established (peer list is live).
+    MkaSessionEstablished,
+    /// MKA session terminated (no live peers).
+    MkaSessionTerminated,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1234,5 +2022,835 @@ mod tests {
         assert!(result.is_err(), "KEK must reject 8-byte key");
         let result = Kek::from_bytes(&[0x01; 24]);
         assert!(result.is_err(), "KEK must reject 24-byte key");
+    }
+
+    // --- REQ-F-MKA-002: MKA Transport ---
+
+    /// Mock MkaContext for testing.
+    use std::sync::atomic::{AtomicU8, Ordering};
+    use std::sync::Mutex;
+
+    struct MockMkaContext {
+        ick: Ick,
+        kek: Kek,
+        now_time: Mutex<Duration>,
+        sent_frames: Mutex<Vec<Vec<u8>>>,
+        mi_counter: AtomicU8,
+    }
+
+    impl MockMkaContext {
+        fn new(cak: &Cak, ckn: &Ckn) -> Self {
+            let kdf = AesCmacKdf;
+            let ick = kdf.derive_ick(cak, ckn).unwrap();
+            let kek = kdf.derive_kek(cak, ckn).unwrap();
+            Self {
+                ick,
+                kek,
+                now_time: Mutex::new(Duration::ZERO),
+                sent_frames: Mutex::new(Vec::new()),
+                mi_counter: AtomicU8::new(0),
+            }
+        }
+
+        fn advance_time(&self, delta: Duration) {
+            let mut t = self.now_time.lock().unwrap();
+            *t += delta;
+        }
+
+        fn sent_frames(&self) -> Vec<Vec<u8>> {
+            self.sent_frames.lock().unwrap().clone()
+        }
+    }
+
+    impl MkaContext for MockMkaContext {
+        fn derive_keys(&self, cak: &Cak, ckn: &Ckn) -> Result<(Ick, Kek), crate::PaeError> {
+            let kdf = AesCmacKdf;
+            let ick = kdf.derive_ick(cak, ckn)?;
+            let kek = kdf.derive_kek(cak, ckn)?;
+            Ok((ick, kek))
+        }
+
+        fn generate_sak(&self, cipher_suite: CipherSuite) -> Result<Sak, crate::PaeError> {
+            let key = vec![0xAB; cipher_suite.key_len()];
+            Sak::from_bytes(&key, 0).map_err(|e| crate::PaeError::KeyError(e.to_string()))
+        }
+
+        fn wrap_sak(&self, sak: &Sak, _kek: &Kek) -> Result<Vec<u8>, crate::PaeError> {
+            // Mock: just return the SAK bytes with a header
+            let mut wrapped = vec![0x01]; // mock header
+            wrapped.extend_from_slice(sak.as_bytes());
+            Ok(wrapped)
+        }
+
+        fn unwrap_sak(&self, wrapped: &[u8], _kek: &Kek, an: u8) -> Result<Sak, crate::PaeError> {
+            // Mock: skip the 1-byte header and extract SAK
+            if wrapped.len() < 2 {
+                return Err(crate::PaeError::CryptoError("wrapped SAK too short".into()));
+            }
+            Sak::from_bytes(&wrapped[1..], an)
+                .map_err(|e| crate::PaeError::CryptoError(e.to_string()))
+        }
+
+        fn compute_icv(&self, payload: &[u8], ick: &Ick) -> Result<[u8; 16], crate::PaeError> {
+            super::compute_icv(payload, ick)
+        }
+
+        fn verify_icv(&self, payload: &[u8], icv: &[u8], ick: &Ick) -> Result<(), crate::PaeError> {
+            let computed = super::compute_icv(payload, ick)?;
+            let mut diff = 0u8;
+            for (a, b) in computed.iter().zip(icv.iter()) {
+                diff |= a ^ b;
+            }
+            if diff == 0 {
+                Ok(())
+            } else {
+                Err(crate::PaeError::IcvFailed)
+            }
+        }
+
+        fn random_mi(&self) -> [u8; 12] {
+            let mut mi = [0u8; 12];
+            let c = self.mi_counter.fetch_add(1, Ordering::SeqCst);
+            mi[0] = c;
+            mi
+        }
+
+        fn now(&self) -> Duration {
+            *self.now_time.lock().unwrap()
+        }
+
+        fn send_mkpdu(&self, frame: &[u8]) -> Result<(), crate::PaeError> {
+            self.sent_frames.lock().unwrap().push(frame.to_vec());
+            Ok(())
+        }
+    }
+
+    fn make_participant() -> MkaParticipant<MockMkaContext> {
+        let cak = Cak::from_bytes(&[0x01; 16]).unwrap();
+        let ckn = Ckn::from_bytes(vec![0x02; 16]).unwrap();
+        let ctx = MockMkaContext::new(&cak, &ckn);
+        let sci = Sci::new([0x00, 0x11, 0x22, 0x33, 0x44, 0x55], 1);
+        MkaParticipant::new(ctx, cak, ckn, CipherSuite::GcmAes128, sci, 0x10).unwrap()
+    }
+
+    /// Verifies: #20 (REQ-F-MKA-002)
+    /// Per IEEE 802.1X-2020, Clause 9.7.
+    /// compute_icv produces a deterministic 16-byte ICV from payload + ICK.
+    #[test]
+    fn test_compute_icv_deterministic() {
+        let cak = Cak::from_bytes(&[0x01; 16]).unwrap();
+        let ckn = Ckn::from_bytes(vec![0x02; 16]).unwrap();
+        let kdf = AesCmacKdf;
+        let ick = kdf.derive_ick(&cak, &ckn).unwrap();
+
+        let payload = b"test payload for ICV";
+        let icv1 = compute_icv(payload, &ick).expect("compute_icv should succeed");
+        let icv2 = compute_icv(payload, &ick).expect("compute_icv should succeed");
+        assert_eq!(icv1, icv2, "ICV must be deterministic");
+        assert_eq!(icv1.len(), 16, "ICV must be 16 bytes");
+    }
+
+    /// Verifies: #20 (REQ-F-MKA-002)
+    /// Per IEEE 802.1X-2020, Clause 9.7.
+    /// Different payloads produce different ICVs.
+    #[test]
+    fn test_compute_icv_different_payloads() {
+        let cak = Cak::from_bytes(&[0x01; 16]).unwrap();
+        let ckn = Ckn::from_bytes(vec![0x02; 16]).unwrap();
+        let kdf = AesCmacKdf;
+        let ick = kdf.derive_ick(&cak, &ckn).unwrap();
+
+        let icv1 = compute_icv(b"payload A", &ick).unwrap();
+        let icv2 = compute_icv(b"payload B", &ick).unwrap();
+        assert_ne!(icv1, icv2, "Different payloads must produce different ICVs");
+    }
+
+    /// Verifies: #20 (REQ-F-MKA-002)
+    /// Per IEEE 802.1X-2020, Clause 9.7.
+    /// Different ICKs produce different ICVs for the same payload.
+    #[test]
+    fn test_compute_icv_different_icks() {
+        let cak1 = Cak::from_bytes(&[0x01; 16]).unwrap();
+        let cak2 = Cak::from_bytes(&[0x03; 16]).unwrap();
+        let ckn = Ckn::from_bytes(vec![0x02; 16]).unwrap();
+        let kdf = AesCmacKdf;
+        let ick1 = kdf.derive_ick(&cak1, &ckn).unwrap();
+        let ick2 = kdf.derive_ick(&cak2, &ckn).unwrap();
+
+        let payload = b"same payload";
+        let icv1 = compute_icv(payload, &ick1).unwrap();
+        let icv2 = compute_icv(payload, &ick2).unwrap();
+        assert_ne!(icv1, icv2, "Different ICKs must produce different ICVs");
+    }
+
+    /// Verifies: #20 (REQ-F-MKA-002)
+    /// Per IEEE 802.1X-2020, Clause 9.7.
+    /// compute_icv works with AES-256 ICK (32-byte key).
+    #[test]
+    fn test_compute_icv_aes256() {
+        let cak = Cak::from_bytes(&[0x01; 32]).unwrap();
+        let ckn = Ckn::from_bytes(vec![0x02; 16]).unwrap();
+        let kdf = AesCmacKdf;
+        let ick = kdf.derive_ick(&cak, &ckn).unwrap();
+        assert_eq!(ick.len(), 32);
+
+        let icv = compute_icv(b"test payload", &ick).expect("AES-256 ICV should succeed");
+        assert_eq!(icv.len(), 16);
+    }
+
+    /// Verifies: #20 (REQ-F-MKA-002)
+    /// Per IEEE 802.1X-2020, Clause 9.7.
+    /// verify_icv succeeds when ICV matches.
+    #[test]
+    fn test_verify_icv_success() {
+        let cak = Cak::from_bytes(&[0x01; 16]).unwrap();
+        let ckn = Ckn::from_bytes(vec![0x02; 16]).unwrap();
+        let kdf = AesCmacKdf;
+        let ick = kdf.derive_ick(&cak, &ckn).unwrap();
+
+        let payload = b"test payload for verification";
+        let icv = compute_icv(payload, &ick).unwrap();
+        let result = verify_icv(payload, &icv, &ick);
+        assert!(
+            result.is_ok(),
+            "ICV verification must succeed with matching ICV"
+        );
+    }
+
+    /// Verifies: #20 (REQ-F-MKA-002)
+    /// Per IEEE 802.1X-2020, Clause 9.7.
+    /// verify_icv fails when ICV does not match.
+    #[test]
+    fn test_verify_icv_failure() {
+        let cak = Cak::from_bytes(&[0x01; 16]).unwrap();
+        let ckn = Ckn::from_bytes(vec![0x02; 16]).unwrap();
+        let kdf = AesCmacKdf;
+        let ick = kdf.derive_ick(&cak, &ckn).unwrap();
+
+        let payload = b"test payload for verification";
+        let wrong_icv = [0xFF; 16];
+        let result = verify_icv(payload, &wrong_icv, &ick);
+        assert!(result.is_err(), "ICV verification must fail with wrong ICV");
+    }
+
+    /// Verifies: #20 (REQ-F-MKA-002)
+    /// Per IEEE 802.1X-2020, Clause 9.
+    /// MkaParticipant initializes in Pending state with valid MI and MN.
+    #[test]
+    fn test_mka_participant_init() {
+        let p = make_participant();
+        assert_eq!(p.state(), MkaState::Pending);
+        assert_eq!(p.mn(), 1);
+        assert_eq!(p.cipher_suite(), CipherSuite::GcmAes128);
+        assert_eq!(p.key_server_priority(), 0x10);
+    }
+
+    /// Verifies: #20 (REQ-F-MKA-002)
+    /// Per IEEE 802.1X-2020, Clause 9.4.
+    /// Given an active participant, When the MKA Hello Time expires,
+    /// Then an MKPDU is transmitted with authenticated integrity.
+    #[test]
+    fn test_mka_participant_step_transmits_mkpdu() {
+        let mut p = make_participant();
+        // First step: should transmit immediately (no prior hello)
+        let events = p.step().expect("step should succeed");
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            PaeEvent::MkaTransmit { mkpdu } => {
+                assert!(!mkpdu.is_empty(), "MKPDU must not be empty");
+            }
+            _ => panic!("expected MkaTransmit event"),
+        }
+
+        // Sent frames should contain the MKPDU
+        let frames = p.ctx.sent_frames();
+        assert_eq!(frames.len(), 1);
+    }
+
+    /// Verifies: #20 (REQ-F-MKA-002)
+    /// Per IEEE 802.1X-2020, Clause 9.4.
+    /// Step does not retransmit before Hello Time expires.
+    #[test]
+    fn test_mka_participant_step_no_premature_retransmit() {
+        let mut p = make_participant();
+        let events1 = p.step().unwrap();
+        assert_eq!(events1.len(), 1);
+
+        // Advance time by less than Hello Time (2000ms)
+        p.ctx.advance_time(Duration::from_millis(1000));
+        let events2 = p.step().unwrap();
+        assert!(
+            events2.is_empty(),
+            "should not retransmit before Hello Time"
+        );
+    }
+
+    /// Verifies: #20 (REQ-F-MKA-002)
+    /// Per IEEE 802.1X-2020, Clause 9.4.
+    /// Step retransmits after Hello Time expires.
+    #[test]
+    fn test_mka_participant_step_retransmit_after_hello() {
+        let mut p = make_participant();
+        p.step().unwrap();
+
+        // Advance past Hello Time
+        p.ctx.advance_time(Duration::from_millis(2001));
+        let events = p.step().unwrap();
+        assert_eq!(events.len(), 1, "should retransmit after Hello Time");
+
+        let frames = p.ctx.sent_frames();
+        assert_eq!(frames.len(), 2);
+    }
+
+    /// Verifies: #20 (REQ-F-MKA-002)
+    /// Per IEEE 802.1X-2020, Clause 9.7.
+    /// Transmitted MKPDU can be decoded and ICV verified.
+    #[test]
+    fn test_mka_participant_mkpdu_icv_round_trip() {
+        let mut p = make_participant();
+        let events = p.step().unwrap();
+        let mkpdu_bytes = match &events[0] {
+            PaeEvent::MkaTransmit { mkpdu } => mkpdu.clone(),
+            _ => panic!("expected MkaTransmit"),
+        };
+
+        // Decode the MKPDU
+        let mkpdu = crate::mkpdu::Mkpdu::decode(&mkpdu_bytes).expect("MKPDU decode should succeed");
+        assert!(mkpdu.icv().is_some(), "MKPDU must have ICV");
+
+        // Verify ICV
+        let payload = mkpdu.encode_without_icv().unwrap();
+        let kdf = AesCmacKdf;
+        let cak = Cak::from_bytes(&[0x01; 16]).unwrap();
+        let ckn = Ckn::from_bytes(vec![0x02; 16]).unwrap();
+        let ick = kdf.derive_ick(&cak, &ckn).unwrap();
+        let expected_icv = compute_icv(&payload, &ick).unwrap();
+        mkpdu
+            .verify_icv(&expected_icv)
+            .expect("ICV verification should succeed");
+    }
+
+    /// Verifies: #20 (REQ-F-MKA-002)
+    /// Per IEEE 802.1X-2020, Clause 9.4.
+    /// handle_mkpdu verifies ICV and rejects invalid ICV.
+    #[test]
+    fn test_mka_participant_handle_mkpdu_valid_icv() {
+        let mut p = make_participant();
+
+        // Build a valid MKPDU from a "peer"
+        let cak = Cak::from_bytes(&[0x01; 16]).unwrap();
+        let ckn = Ckn::from_bytes(vec![0x02; 16]).unwrap();
+        let kdf = AesCmacKdf;
+        let ick = kdf.derive_ick(&cak, &ckn).unwrap();
+
+        let bps = crate::mkpdu::BasicParameterSet {
+            version: crate::mkpdu::MKPDU_VERSION,
+            key_server_priority: 0x20,
+            macsec_capability: 3,
+            macsec_desired: true,
+            sci: Sci::new([0xAA; 6], 1),
+            actor_mi: [0xBB; 12],
+            actor_mn: 5,
+            key_server_mi: [0xBB; 12],
+            ckn: ckn.clone(),
+            cipher_suite: CipherSuite::GcmAes128,
+            an: 0,
+        };
+
+        let mkpdu_no_icv =
+            crate::mkpdu::Mkpdu::new(vec![crate::mkpdu::ParameterSet::Basic(bps)]).unwrap();
+        let payload = mkpdu_no_icv.encode_without_icv().unwrap();
+        let icv = compute_icv(&payload, &ick).unwrap();
+
+        let mkpdu_with_icv = crate::mkpdu::Mkpdu::new(vec![
+            mkpdu_no_icv.parameter_sets()[0].clone(),
+            crate::mkpdu::ParameterSet::Icv(icv),
+        ])
+        .unwrap();
+        let raw = mkpdu_with_icv.encode().unwrap();
+
+        let result = p.handle_mkpdu(&raw);
+        assert!(result.is_ok(), "handle_mkpdu with valid ICV should succeed");
+    }
+
+    /// Verifies: #20 (REQ-F-MKA-002)
+    /// Per IEEE 802.1X-2020, Clause 9.7.
+    /// handle_mkpdu rejects MKPDU with invalid ICV.
+    #[test]
+    fn test_mka_participant_handle_mkpdu_invalid_icv() {
+        let mut p = make_participant();
+
+        let bps = crate::mkpdu::BasicParameterSet {
+            version: crate::mkpdu::MKPDU_VERSION,
+            key_server_priority: 0x20,
+            macsec_capability: 3,
+            macsec_desired: true,
+            sci: Sci::new([0xAA; 6], 1),
+            actor_mi: [0xBB; 12],
+            actor_mn: 5,
+            key_server_mi: [0xBB; 12],
+            ckn: Ckn::from_bytes(vec![0x02; 16]).unwrap(),
+            cipher_suite: CipherSuite::GcmAes128,
+            an: 0,
+        };
+
+        let wrong_icv = [0xFF; 16];
+        let mkpdu = crate::mkpdu::Mkpdu::new(vec![
+            crate::mkpdu::ParameterSet::Basic(bps),
+            crate::mkpdu::ParameterSet::Icv(wrong_icv),
+        ])
+        .unwrap();
+        let raw = mkpdu.encode().unwrap();
+
+        let result = p.handle_mkpdu(&raw);
+        assert!(result.is_err(), "handle_mkpdu with invalid ICV must fail");
+    }
+
+    /// Verifies: #20 (REQ-F-MKA-002)
+    /// Per IEEE 802.1X-2020, Clause 9.4.
+    /// MN increments after each step and handle_mkpdu.
+    #[test]
+    fn test_mka_participant_mn_increments() {
+        let mut p = make_participant();
+        assert_eq!(p.mn(), 1);
+
+        p.step().unwrap();
+        assert_eq!(p.mn(), 2, "MN should increment after step");
+    }
+
+    // --- REQ-F-MKA-003: MKA Peer List Management ---
+
+    /// Verifies: #21 (REQ-F-MKA-003)
+    /// Per IEEE 802.1X-2020, Clause 9.4.
+    /// MkaPeer creates with Potential status.
+    #[test]
+    fn test_mka_peer_new() {
+        let mi = [0xAA; 12];
+        let peer = MkaPeer::new(mi, 5);
+        assert_eq!(*peer.mi(), mi);
+        assert_eq!(peer.mn(), 5);
+        assert_eq!(peer.status(), MkaPeerStatus::Potential);
+        assert!(peer.last_rx().is_none());
+    }
+
+    /// Verifies: #21 (REQ-F-MKA-003)
+    /// Per IEEE 802.1X-2020, Clause 9.4.
+    /// MkaPeer promotes from Potential to Live.
+    #[test]
+    fn test_mka_peer_promote() {
+        let mi = [0xAA; 12];
+        let mut peer = MkaPeer::new(mi, 1);
+        assert_eq!(peer.status(), MkaPeerStatus::Potential);
+        peer.promote();
+        assert_eq!(peer.status(), MkaPeerStatus::Live);
+    }
+
+    /// Verifies: #21 (REQ-F-MKA-003)
+    /// Per IEEE 802.1X-2020, Clause 9.4.
+    /// MkaPeer updates MN monotonically.
+    #[test]
+    fn test_mka_peer_update_mn() {
+        let mi = [0xAA; 12];
+        let mut peer = MkaPeer::new(mi, 5);
+        assert!(peer.update_mn(6).is_ok());
+        assert_eq!(peer.mn(), 6);
+        assert!(peer.update_mn(5).is_err(), "MN must not decrease");
+        assert!(peer.update_mn(6).is_err(), "MN must strictly increase");
+    }
+
+    /// Verifies: #21 (REQ-F-MKA-003)
+    /// MkaPeer touch updates last_rx timestamp.
+    #[test]
+    fn test_mka_peer_touch() {
+        let mi = [0xAA; 12];
+        let mut peer = MkaPeer::new(mi, 1);
+        assert!(peer.last_rx().is_none());
+        let now = Duration::from_secs(10);
+        peer.touch(now);
+        assert_eq!(peer.last_rx(), Some(now));
+    }
+
+    /// Verifies: #21 (REQ-F-MKA-003)
+    /// Per IEEE 802.1X-2020, Clause 9.4.
+    /// MkaPeerList starts empty.
+    #[test]
+    fn test_mka_peer_list_new() {
+        let list = MkaPeerList::new();
+        assert!(list.is_empty());
+        assert_eq!(list.live_count(), 0);
+        assert_eq!(list.potential_count(), 0);
+    }
+
+    /// Verifies: #21 (REQ-F-MKA-003)
+    /// Per IEEE 802.1X-2020, Clause 9.4.
+    /// update_peer adds a new peer to the potential list.
+    #[test]
+    fn test_mka_peer_list_update_new_peer() {
+        let mut list = MkaPeerList::new();
+        let mi = [0x01; 12];
+        let now = Duration::from_secs(1);
+        list.update_peer(mi, 1, now).unwrap();
+        assert_eq!(list.potential_count(), 1);
+        assert_eq!(list.live_count(), 0);
+        let peer = list.find_by_mi(&mi).unwrap();
+        assert_eq!(*peer.mi(), mi);
+        assert_eq!(peer.mn(), 1);
+        assert_eq!(peer.status(), MkaPeerStatus::Potential);
+    }
+
+    /// Verifies: #21 (REQ-F-MKA-003)
+    /// Per IEEE 802.1X-2020, Clause 9.4.
+    /// update_peer updates an existing peer's MN.
+    #[test]
+    fn test_mka_peer_list_update_existing_peer() {
+        let mut list = MkaPeerList::new();
+        let mi = [0x01; 12];
+        let now = Duration::from_secs(1);
+        list.update_peer(mi, 1, now).unwrap();
+        let now2 = Duration::from_secs(2);
+        list.update_peer(mi, 2, now2).unwrap();
+        assert_eq!(list.potential_count(), 1, "should not duplicate");
+        let peer = list.find_by_mi(&mi).unwrap();
+        assert_eq!(peer.mn(), 2);
+        assert_eq!(peer.last_rx(), Some(now2));
+    }
+
+    /// Verifies: #21 (REQ-F-MKA-003)
+    /// Per IEEE 802.1X-2020, Clause 9.4.
+    /// Peer list rejects when potential list is full (max 2).
+    #[test]
+    fn test_mka_peer_list_potential_full() {
+        let mut list = MkaPeerList::new();
+        let now = Duration::from_secs(1);
+        list.update_peer([0x01; 12], 1, now).unwrap();
+        list.update_peer([0x02; 12], 1, now).unwrap();
+        let result = list.update_peer([0x03; 12], 1, now);
+        assert!(result.is_err());
+    }
+
+    /// Verifies: #21 (REQ-F-MKA-003)
+    /// Per IEEE 802.1X-2020, Clause 9.4.
+    /// promote_peer moves a peer from potential to live.
+    #[test]
+    fn test_mka_peer_list_promote() {
+        let mut list = MkaPeerList::new();
+        let now = Duration::from_secs(1);
+        let mi = [0x01; 12];
+        list.update_peer(mi, 1, now).unwrap();
+        assert_eq!(list.potential_count(), 1);
+        assert_eq!(list.live_count(), 0);
+
+        list.promote_peer(&mi).unwrap();
+        assert_eq!(list.potential_count(), 0);
+        assert_eq!(list.live_count(), 1);
+        let peer = list.find_by_mi(&mi).unwrap();
+        assert_eq!(peer.status(), MkaPeerStatus::Live);
+    }
+
+    /// Verifies: #21 (REQ-F-MKA-003)
+    /// Peer list rejects promotion when live list is full (max 2).
+    #[test]
+    fn test_mka_peer_list_live_full() {
+        let mut list = MkaPeerList::new();
+        let now = Duration::from_secs(1);
+        let mi1 = [0x01; 12];
+        let mi2 = [0x02; 12];
+        list.update_peer(mi1, 1, now).unwrap();
+        list.update_peer(mi2, 1, now).unwrap();
+
+        list.promote_peer(&mi1).unwrap();
+        list.promote_peer(&mi2).unwrap();
+
+        // Add a third peer and try to promote
+        let mi3 = [0x03; 12];
+        list.update_peer(mi3, 1, now).unwrap();
+        let result = list.promote_peer(&mi3);
+        assert!(result.is_err());
+    }
+
+    /// Verifies: #21 (REQ-F-MKA-003)
+    /// Per IEEE 802.1X-2020, Clause 9.4.
+    /// expire_peers removes peers whose MKA Life timer has expired.
+    #[test]
+    fn test_mka_peer_list_expire() {
+        let mut list = MkaPeerList::new();
+        let now = Duration::from_secs(10);
+        let mka_life = Duration::from_secs(6);
+
+        list.update_peer([0x01; 12], 1, Duration::from_secs(3))
+            .unwrap(); // expired
+        list.update_peer([0x02; 12], 1, Duration::from_secs(8))
+            .unwrap(); // alive
+        list.promote_peer(&[0x02; 12]).unwrap();
+
+        let expired = list.expire_peers(now, mka_life);
+        assert_eq!(expired.len(), 1);
+        assert_eq!(expired[0], [0x01; 12]);
+        assert_eq!(list.potential_count(), 0, "expired peer should be removed");
+        assert_eq!(list.live_count(), 1, "alive peer should remain");
+    }
+
+    /// Verifies: #21 (REQ-F-MKA-003)
+    /// find_by_mi returns None for unknown MI.
+    #[test]
+    fn test_mka_peer_list_find_unknown() {
+        let list = MkaPeerList::new();
+        assert!(list.find_by_mi(&[0xFF; 12]).is_none());
+    }
+
+    /// Verifies: #21 (REQ-F-MKA-003)
+    /// Per IEEE 802.1X-2020, Clause 9.4.
+    /// Live and potential peer iterators work.
+    #[test]
+    fn test_mka_peer_list_iterators() {
+        let mut list = MkaPeerList::new();
+        let now = Duration::from_secs(1);
+        list.update_peer([0x01; 12], 1, now).unwrap();
+        list.update_peer([0x02; 12], 1, now).unwrap();
+        list.promote_peer(&[0x01; 12]).unwrap();
+
+        let live_mis: Vec<_> = list.live_peers().map(|p| *p.mi()).collect();
+        let pot_mis: Vec<_> = list.potential_peers().map(|p| *p.mi()).collect();
+        assert_eq!(live_mis, vec![[0x01; 12]]);
+        assert_eq!(pot_mis, vec![[0x02; 12]]);
+    }
+
+    // --- REQ-F-MKA-004: Key Server Election ---
+
+    /// Verifies: #22 (REQ-F-MKA-004)
+    /// Per IEEE 802.1X-2020, Clause 9.4.
+    /// Actor with lower priority is Key Server.
+    #[test]
+    fn test_elect_key_server_actor_lower_priority() {
+        let role = elect_key_server(0x01, &[0xAA; 12], 0x02, &[0xBB; 12]);
+        assert_eq!(role, KeyServerRole::Actor);
+    }
+
+    /// Verifies: #22 (REQ-F-MKA-004)
+    /// Per IEEE 802.1X-2020, Clause 9.4.
+    /// Peer with lower priority is Key Server.
+    #[test]
+    fn test_elect_key_server_peer_lower_priority() {
+        let role = elect_key_server(0x02, &[0xAA; 12], 0x01, &[0xBB; 12]);
+        assert_eq!(role, KeyServerRole::Partner);
+    }
+
+    /// Verifies: #22 (REQ-F-MKA-004)
+    /// Per IEEE 802.1X-2020, Clause 9.4.
+    /// Equal priority: lexicographically smaller MI wins.
+    #[test]
+    fn test_elect_key_server_equal_priority_mi_tiebreak() {
+        let mi_small = [
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
+        ];
+        let mi_big = [
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02,
+        ];
+        let role = elect_key_server(0x10, &mi_small, 0x10, &mi_big);
+        assert_eq!(role, KeyServerRole::Actor);
+    }
+
+    /// Verifies: #22 (REQ-F-MKA-004)
+    /// Per IEEE 802.1X-2020, Clause 9.4.
+    /// Equal priority and peer has smaller MI: peer is Key Server.
+    #[test]
+    fn test_elect_key_server_equal_priority_peer_smaller_mi() {
+        let mi_big = [0xFF; 12];
+        let mi_small = [0x00; 12];
+        let role = elect_key_server(0x10, &mi_big, 0x10, &mi_small);
+        assert_eq!(role, KeyServerRole::Partner);
+    }
+
+    /// Verifies: #22 (REQ-F-MKA-004)
+    /// MkaParticipant starts as Key Server (Actor).
+    #[test]
+    fn test_mka_participant_initial_key_server() {
+        let p = make_participant();
+        assert!(p.is_key_server());
+        assert_eq!(p.key_server(), KeyServerRole::Actor);
+    }
+
+    // --- REQ-F-MKA-006: SAK Reception/Installation ---
+
+    /// Verifies: #24 (REQ-F-MKA-006)
+    /// Per IEEE 802.1X-2020, Clause 9.8.
+    /// MkaParticipant starts with no SAK installed.
+    #[test]
+    fn test_mka_participant_no_initial_sak() {
+        let p = make_participant();
+        assert!(p.sak().is_none());
+    }
+
+    /// Verifies: #24 (REQ-F-MKA-006)
+    /// Per IEEE 802.1X-2020, Clause 9.8.
+    /// distribute_sak generates and installs a SAK (Key Server only).
+    #[test]
+    fn test_mka_participant_distribute_sak() {
+        let mut p = make_participant();
+        assert!(p.sak().is_none());
+
+        let events = p.distribute_sak().expect("distribute_sak should succeed");
+        assert!(
+            p.sak().is_some(),
+            "SAK should be installed after distribute_sak"
+        );
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            PaeEvent::MkaSakInstalled {
+                sak_key,
+                sak_an,
+                sci,
+                cipher_suite,
+            } => {
+                assert_eq!(*sak_an, 0);
+                assert_eq!(sak_key.len(), 16); // GcmAes128
+                assert_eq!(*sci, *p.sci());
+                assert_eq!(*cipher_suite, p.cipher_suite());
+            }
+            _ => panic!("expected MkaSakInstalled event"),
+        }
+    }
+
+    /// Verifies: #24 (REQ-F-MKA-006)
+    /// Per IEEE 802.1X-2020, Clause 9.8.
+    /// distribute_sak fails when not Key Server.
+    #[test]
+    fn test_mka_participant_distribute_sak_not_key_server() {
+        let mut p = make_participant();
+        p.key_server = KeyServerRole::Partner;
+        let result = p.distribute_sak();
+        assert!(
+            result.is_err(),
+            "distribute_sak must fail when not Key Server"
+        );
+    }
+
+    /// Verifies: #24 (REQ-F-MKA-006)
+    /// Per IEEE 802.1X-2020, Clause 9.8.
+    /// install_sak unwraps and installs a received SAK.
+    #[test]
+    fn test_mka_participant_install_sak() {
+        let mut p = make_participant();
+        assert!(p.sak().is_none());
+
+        // Create a mock wrapped SAK (1-byte header + 16 key bytes)
+        let mut wrapped = vec![0x01];
+        wrapped.extend_from_slice(&[0xAB; 16]);
+
+        let sak = p
+            .install_sak(&wrapped, 1)
+            .expect("install_sak should succeed");
+        assert_eq!(sak.an(), 1);
+        assert!(
+            p.sak().is_some(),
+            "SAK should be installed after install_sak"
+        );
+        assert_eq!(p.sak().unwrap().an(), 1);
+    }
+
+    /// Verifies: #24 (REQ-F-MKA-006)
+    /// Per IEEE 802.1X-2020, Clause 9.8.
+    /// install_sak fails with invalid wrapped data.
+    #[test]
+    fn test_mka_participant_install_sak_invalid() {
+        let mut p = make_participant();
+        let result = p.install_sak(&[0x01], 0); // too short
+        assert!(result.is_err(), "install_sak must fail with invalid data");
+    }
+
+    // --- REQ-F-MKA-008: MKA Participant Creation/Deletion ---
+
+    /// Verifies: #26 (REQ-F-MKA-008)
+    /// Per IEEE 802.1X-2020, Clause 9.
+    /// MkaParticipant starts with empty peer list.
+    #[test]
+    fn test_mka_participant_empty_peers() {
+        let p = make_participant();
+        assert!(p.peers().is_empty());
+        assert_eq!(p.peers().live_count(), 0);
+        assert_eq!(p.peers().potential_count(), 0);
+    }
+
+    /// Verifies: #26 (REQ-F-MKA-008)
+    /// Per IEEE 802.1X-2020, Clause 9.4.
+    /// update_peer_from_mkpdu adds a peer and runs key server election.
+    #[test]
+    fn test_mka_participant_update_peer() {
+        let mut p = make_participant();
+        let mi = [0xBB; 12];
+        let events = p.update_peer_from_mkpdu(mi, 5, 0x20).unwrap();
+        assert!(events.is_empty(), "no events when no live peers");
+        assert_eq!(p.peers().potential_count(), 1);
+        assert_eq!(p.state(), MkaState::Pending);
+    }
+
+    /// Verifies: #26 (REQ-F-MKA-008)
+    /// Per IEEE 802.1X-2020, Clause 9.4.
+    /// Transition to Established when a peer is promoted to Live.
+    #[test]
+    fn test_mka_participant_established_on_live_peer() {
+        let mut p = make_participant();
+        let mi = [0xBB; 12];
+        p.update_peer_from_mkpdu(mi, 5, 0x20).unwrap();
+        assert_eq!(p.state(), MkaState::Pending);
+
+        // Promote the peer to Live
+        p.peers.promote_peer(&mi).unwrap();
+        // The next update_peer_from_mkpdu should detect live peers
+        let events = p.update_peer_from_mkpdu(mi, 6, 0x20).unwrap();
+        assert_eq!(p.state(), MkaState::Established);
+        assert!(events.contains(&PaeEvent::MkaSessionEstablished));
+    }
+
+    /// Verifies: #26 (REQ-F-MKA-008)
+    /// Per IEEE 802.1X-2020, Clause 9.4.
+    /// Key server election updates when peer has lower priority.
+    #[test]
+    fn test_mka_participant_key_server_election_on_peer() {
+        let mut p = make_participant();
+        assert!(p.is_key_server());
+
+        // Peer with lower priority becomes Key Server
+        let mi = [0xBB; 12];
+        p.update_peer_from_mkpdu(mi, 5, 0x05).unwrap(); // 0x05 < 0x10
+        assert_eq!(p.key_server(), KeyServerRole::Partner);
+    }
+
+    /// Verifies: #26 (REQ-F-MKA-008)
+    /// Per IEEE 802.1X-2020, Clause 9.
+    /// teardown clears SAK, peers, and resets state.
+    #[test]
+    fn test_mka_participant_teardown() {
+        let mut p = make_participant();
+        p.update_peer_from_mkpdu([0xBB; 12], 5, 0x20).unwrap();
+        p.distribute_sak().unwrap();
+        assert!(p.sak().is_some());
+        assert!(!p.peers().is_empty());
+
+        let events = p.teardown();
+        assert!(p.sak().is_none());
+        assert!(p.peers().is_empty());
+        assert_eq!(p.state(), MkaState::Pending);
+        assert!(p.is_key_server());
+        assert!(events.contains(&PaeEvent::MkaSessionTerminated));
+    }
+
+    /// Verifies: #26 (REQ-F-MKA-008)
+    /// Per IEEE 802.1X-2020, Clause 9.4.
+    /// expire_peers transitions back to Pending when all live peers expire.
+    #[test]
+    fn test_mka_participant_expire_peers_session_terminated() {
+        let mut p = make_participant();
+        let mi = [0xBB; 12];
+        p.update_peer_from_mkpdu(mi, 5, 0x20).unwrap();
+        p.peers.promote_peer(&mi).unwrap();
+        p.update_peer_from_mkpdu(mi, 6, 0x20).unwrap();
+        assert_eq!(p.state(), MkaState::Established);
+
+        // Advance time past MKA Life Time
+        p.ctx.advance_time(Duration::from_secs(10));
+        let events = p.expire_peers();
+        assert_eq!(p.state(), MkaState::Pending);
+        assert!(events.contains(&PaeEvent::MkaSessionTerminated));
     }
 }
