@@ -69,3 +69,6 @@ pub use peer::{
     EapCode, EapContext, EapMethod, EapMethodOutput, EapPacket, EapPeer, EapPeerState, EapType,
     TlsClientConfig,
 };
+
+#[cfg(feature = "eap-tls")]
+pub use eap_tls::{EapTls, EapTlsState, TlsEngine};

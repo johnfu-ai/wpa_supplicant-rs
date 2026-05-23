@@ -59,7 +59,7 @@ Phase 05 — TDD implementation order based on crate dependency graph and protoc
 | # | REQ-F | Title | Crate | Depends On | Status |
 |---|---|---|---|---|---|
 | 38 | REQ-F-EAP-001 | EAP Peer Framework | `eap-peer` | — | Done |
-| 39 | REQ-F-EAP-002 | EAP-TLS | `eap-peer` | EAP-001 | — |
+| 39 | REQ-F-EAP-002 | EAP-TLS | `eap-peer` | EAP-001 | Done |
 | 43 | REQ-F-EAP-006 | EAP Method Key Derivation for MKA | `eap-peer` | EAP-001 | — |
 | 42 | REQ-F-EAP-005 | EAP Method Mutual Authentication | `eap-peer` | EAP-002 | — |
 | 40 | REQ-F-EAP-003 | PEAP | `eap-peer` | EAP-001 | — |
