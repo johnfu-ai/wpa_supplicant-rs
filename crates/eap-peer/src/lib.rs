@@ -1,9 +1,9 @@
 //! EAP Peer — EAP authentication methods for the supplicant.
 //!
-//! Implements EAP peer methods used by the IEEE 802.1X-2020 supplicant:
-//! - EAP-TLS (feature: `eap-tls`, enabled by default)
-//! - EAP-PEAP (feature: `eap-peap`)
-//! - EAP-TEAP (feature: `eap-teap`)
+//! Implements EAP peer framework per IETF RFC 3748.
+//!
+//! Implements: #38 (REQ-F-EAP-001: EAP Peer Framework)
+//! Architecture: #74 (ADR-SM-002), #78 (ADR-FF-006)
 
 #![warn(missing_docs)]
 
@@ -23,6 +23,8 @@ pub mod eap_peap;
 pub mod eap_teap;
 
 /// Error type for EAP peer operations.
+///
+/// Per ADR-ERR-005 (#77).
 #[derive(Debug, thiserror::Error)]
 pub enum EapError {
     /// Authentication failed.
@@ -36,4 +38,34 @@ pub enum EapError {
     /// TLS handshake error.
     #[error("TLS error: {0}")]
     TlsError(String),
+
+    /// No acceptable EAP method (NAK exhausted).
+    #[error("no acceptable EAP method")]
+    NoAcceptableMethod,
+
+    /// Method negotiation failed.
+    #[error("method negotiation failed: proposed {proposed:?}, available {available:?}")]
+    NegotiationFailed {
+        /// Proposed EAP type numbers by authenticator.
+        proposed: Vec<u8>,
+        /// Available EAP type numbers on the peer.
+        available: Vec<u8>,
+    },
+
+    /// Retransmission timeout.
+    #[error("retransmission timeout after {attempts} attempts")]
+    RetransmitTimeout {
+        /// Number of retransmission attempts.
+        attempts: u32,
+    },
+
+    /// PAE core error propagated from `pae` crate.
+    #[error("PAE error: {0}")]
+    Pae(#[from] pae::PaeError),
 }
+
+// Re-export key types for convenience
+pub use peer::{
+    EapCode, EapContext, EapMethod, EapMethodOutput, EapPacket, EapPeer, EapPeerState, EapType,
+    TlsClientConfig,
+};

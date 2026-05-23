@@ -327,6 +327,60 @@ impl std::fmt::Debug for Sak {
     }
 }
 
+/// Master Session Key — output from EAP authentication.
+///
+/// Per RFC 3748: MSK is at least 64 octets.
+/// Used to derive CAK per IEEE 802.1X-2020, Clause 6.2.2.
+/// Zeroized on drop; no Clone to prevent key duplication.
+///
+/// Implements: #38 (REQ-F-EAP-001: EAP Peer Framework)
+#[derive(ZeroizeOnDrop)]
+pub struct Msk {
+    /// Raw key bytes.
+    key: Vec<u8>,
+}
+
+impl Msk {
+    /// Minimum MSK length per RFC 3748.
+    const MIN_LEN: usize = 64;
+
+    /// Create an MSK from raw bytes. Per RFC 3748.
+    ///
+    /// # Errors
+    /// Returns `PaeError::KeyError` if `key` is less than 64 bytes.
+    pub fn from_bytes(key: Vec<u8>) -> Result<Self, crate::PaeError> {
+        if key.len() < Self::MIN_LEN {
+            return Err(crate::PaeError::KeyError(format!(
+                "MSK must be at least 64 bytes, got {}",
+                key.len()
+            )));
+        }
+        Ok(Self { key })
+    }
+
+    /// MSK length in bytes.
+    pub fn len(&self) -> usize {
+        self.key.len()
+    }
+
+    /// Whether the MSK is empty.
+    pub fn is_empty(&self) -> bool {
+        self.key.is_empty()
+    }
+
+    /// Key bytes as a slice (for KDF operations only).
+    #[allow(dead_code)]
+    pub(crate) fn as_bytes(&self) -> &[u8] {
+        &self.key
+    }
+}
+
+impl std::fmt::Debug for Msk {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Msk([REDACTED])")
+    }
+}
+
 /// Secure Channel Identifier.
 ///
 /// Per IEEE 802.1X-2020, Clause 9.4.

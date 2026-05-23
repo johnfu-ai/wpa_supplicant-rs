@@ -76,7 +76,7 @@ pub use cp::{CpEvent, CpState, CpStateMachine, CpTransition, SecureAssociation, 
 pub use mka::{
     common_cipher_suite, compute_icv, elect_key_server, verify_icv, AesCmacKdf, Cak, CakEntry,
     CakStore, CipherSuite, Ckn, Ick, Kdf, Kek, KeyServerRole, MkaContext, MkaParticipant, MkaPeer,
-    MkaPeerList, MkaPeerStatus, MkaState, PaeEvent, Rng, Sak, Sci, SystemRng,
+    MkaPeerList, MkaPeerStatus, MkaState, Msk, PaeEvent, Rng, Sak, Sci, SystemRng,
 };
 pub use mkpdu::{
     BasicParameterSet, DistribSakParameterSet, Mkpdu, ParameterSet, PeerEntry, SakUseParameterSet,
