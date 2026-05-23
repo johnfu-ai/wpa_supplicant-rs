@@ -78,3 +78,6 @@ pub use eap_tls::{EapTls, EapTlsState, TlsEngine};
 
 #[cfg(feature = "eap-peap")]
 pub use eap_peap::{EapPeap, EapPeapState};
+
+#[cfg(feature = "eap-teap")]
+pub use eap_teap::{EapTeap, EapTeapState};
