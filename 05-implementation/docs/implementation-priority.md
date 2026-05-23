@@ -62,8 +62,8 @@ Phase 05 — TDD implementation order based on crate dependency graph and protoc
 | 39 | REQ-F-EAP-002 | EAP-TLS | `eap-peer` | EAP-001 | Done |
 | 43 | REQ-F-EAP-006 | EAP Method Key Derivation for MKA | `eap-peer` | EAP-001 | Done |
 | 42 | REQ-F-EAP-005 | EAP Method Mutual Authentication | `eap-peer` | EAP-002 | Done |
-| 40 | REQ-F-EAP-003 | PEAP | `eap-peer` | EAP-001 | — |
-| 41 | REQ-F-EAP-004 | TEAP | `eap-peer` | EAP-001 | — |
+| 40 | REQ-F-EAP-003 | PEAP | `eap-peer` | EAP-001 | Done |
+| 41 | REQ-F-EAP-004 | TEAP | `eap-peer` | EAP-001 | Done |
 
 ## P5 — Logon Process (logon crate, depends on pae + eapol-supp)
 
