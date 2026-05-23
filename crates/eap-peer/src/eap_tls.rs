@@ -245,6 +245,10 @@ impl EapMethod for EapTls {
     fn take_msk(&mut self) -> Option<pae::Msk> {
         self.msk.take()
     }
+
+    fn supports_mutual_authentication(&self) -> bool {
+        true // EAP-TLS provides mutual certificate-based authentication
+    }
 }
 
 #[cfg(test)]

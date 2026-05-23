@@ -322,7 +322,7 @@ pub struct TlsClientConfig {
 /// New EAP methods are added by implementing this trait
 /// and adding a feature flag — zero changes to other crates.
 ///
-/// Implements: #38 (REQ-F-EAP-001)
+/// Implements: #38 (REQ-F-EAP-001), #42 (REQ-F-EAP-005)
 pub trait EapMethod: Send + Sync {
     /// EAP method type number.
     fn method_type(&self) -> EapType;
@@ -348,6 +348,13 @@ pub trait EapMethod: Send + Sync {
     ///
     /// Returns `None` if not complete or method doesn't produce MSK.
     fn take_msk(&mut self) -> Option<pae::Msk>;
+
+    /// Whether this method supports mutual authentication.
+    ///
+    /// Per IEEE 802.1X-2020, Clause 8.11: all EAP methods used by the
+    /// supplicant shall support mutual authentication. Methods returning
+    /// `false` must not be used with MKA.
+    fn supports_mutual_authentication(&self) -> bool;
 }
 
 /// Context trait for EAP peer — abstracts I/O and configuration.
@@ -372,6 +379,34 @@ pub trait EapContext: Send + Sync {
     /// Get retransmission timeout. Per RFC 3748.
     fn retransmit_timeout(&self) -> Duration {
         Duration::from_secs(30)
+    }
+}
+
+/// EAP peer — manages the EAP conversation per RFC 3748.
+///
+/// Implements: #38 (REQ-F-EAP-001)
+/// Validate that all methods in the list support mutual authentication.
+///
+/// Per IEEE 802.1X-2020, Clause 8.11: all EAP methods used by the
+/// supplicant shall support mutual authentication.
+///
+/// Returns `Ok(())` if all methods support mutual auth, or
+/// `Err(EapError)` listing the non-mutual-auth methods.
+///
+/// Implements: #42 (REQ-F-EAP-005)
+pub fn validate_mutual_authentication(
+    methods: &[Box<dyn EapMethod>],
+) -> Result<(), super::EapError> {
+    let non_mutual: Vec<u8> = methods
+        .iter()
+        .filter(|m| !m.supports_mutual_authentication())
+        .map(|m| m.method_type().value())
+        .collect();
+
+    if non_mutual.is_empty() {
+        Ok(())
+    } else {
+        Err(super::EapError::NoAcceptableMethod)
     }
 }
 
@@ -647,6 +682,10 @@ mod tests {
         fn take_msk(&mut self) -> Option<pae::Msk> {
             self.msk.take()
         }
+
+        fn supports_mutual_authentication(&self) -> bool {
+            true
+        }
     }
 
     /// Mock EAP method that always fails.
@@ -676,6 +715,10 @@ mod tests {
 
         fn take_msk(&mut self) -> Option<pae::Msk> {
             None
+        }
+
+        fn supports_mutual_authentication(&self) -> bool {
+            false // MD5-Challenge does not support mutual auth
         }
     }
 
@@ -718,6 +761,10 @@ mod tests {
 
         fn take_msk(&mut self) -> Option<pae::Msk> {
             None
+        }
+
+        fn supports_mutual_authentication(&self) -> bool {
+            true
         }
     }
 
@@ -1120,5 +1167,69 @@ mod tests {
 
         let err = crate::EapError::RetransmitTimeout { attempts: 3 };
         assert!(err.to_string().contains("timeout"));
+    }
+
+    // --- Mutual authentication tests (REQ-F-EAP-005) ---
+
+    /// Mock method that supports mutual authentication.
+    struct MockMutualAuthMethod;
+
+    impl EapMethod for MockMutualAuthMethod {
+        fn method_type(&self) -> EapType {
+            EapType::Tls
+        }
+        fn handle_request(
+            &mut self,
+            _: u8,
+            _: &[u8],
+            _: &dyn EapContext,
+        ) -> Result<EapMethodOutput, crate::EapError> {
+            Ok(EapMethodOutput::Failure {
+                reason: "not implemented".into(),
+            })
+        }
+        fn reset(&mut self) {}
+        fn is_complete(&self) -> bool {
+            false
+        }
+        fn take_msk(&mut self) -> Option<pae::Msk> {
+            None
+        }
+        fn supports_mutual_authentication(&self) -> bool {
+            true
+        }
+    }
+
+    /// Verifies: #42 (REQ-F-EAP-005)
+    /// Per Clause 8.11: validate_mutual_authentication accepts all mutual-auth methods.
+    #[test]
+    fn test_validate_mutual_auth_all_pass() {
+        let methods: Vec<Box<dyn EapMethod>> = vec![Box::new(MockMutualAuthMethod)];
+        assert!(validate_mutual_authentication(&methods).is_ok());
+    }
+
+    /// Verifies: #42 (REQ-F-EAP-005)
+    /// Per Clause 8.11: validate_mutual_authentication rejects non-mutual-auth methods.
+    #[test]
+    fn test_validate_mutual_auth_rejects_non_mutual() {
+        let methods: Vec<Box<dyn EapMethod>> = vec![Box::new(MockFailMethod)];
+        assert!(validate_mutual_authentication(&methods).is_err());
+    }
+
+    /// Verifies: #42 (REQ-F-EAP-005)
+    /// Per Clause 8.11: mixed methods (some mutual, some not) rejected.
+    #[test]
+    fn test_validate_mutual_auth_mixed_rejected() {
+        let methods: Vec<Box<dyn EapMethod>> =
+            vec![Box::new(MockMutualAuthMethod), Box::new(MockFailMethod)];
+        assert!(validate_mutual_authentication(&methods).is_err());
+    }
+
+    /// Verifies: #42 (REQ-F-EAP-005)
+    /// Per Clause 8.11: empty method list passes (no methods to reject).
+    #[test]
+    fn test_validate_mutual_auth_empty_passes() {
+        let methods: Vec<Box<dyn EapMethod>> = vec![];
+        assert!(validate_mutual_authentication(&methods).is_ok());
     }
 }
