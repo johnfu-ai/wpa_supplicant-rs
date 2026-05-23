@@ -10,6 +10,9 @@
 /// EAP peer core types and state machine.
 pub mod peer;
 
+/// EAP method key derivation for MKA.
+pub mod key_derivation;
+
 /// EAP-TLS method.
 #[cfg(feature = "eap-tls")]
 pub mod eap_tls;

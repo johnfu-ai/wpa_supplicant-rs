@@ -115,6 +115,8 @@ pub enum EapMethodOutput {
     Success {
         /// MSK (Master Session Key), at least 64 octets per RFC 3748.
         msk: pae::Msk,
+        /// Session-Id per RFC 5247: EAP method type (1 octet) + method-specific data.
+        session_id: Vec<u8>,
     },
     /// Method has failed.
     Failure {
@@ -502,7 +504,7 @@ impl EapPeer {
                                 data,
                             )))
                         }
-                        EapMethodOutput::Success { msk } => {
+                        EapMethodOutput::Success { msk, .. } => {
                             self.msk = Some(msk);
                             self.state = EapPeerState::Waiting;
                             Ok(None)
@@ -629,6 +631,7 @@ mod tests {
             // We create a fresh one here for the output since Msk is not Clone
             Ok(EapMethodOutput::Success {
                 msk: pae::Msk::from_bytes(vec![0xAB; 64]).unwrap(),
+                session_id: vec![13, 0x01, 0x02], // EAP-TLS session id
             })
         }
 

@@ -189,6 +189,7 @@ impl EapMethod for EapTls {
                                 .msk
                                 .take()
                                 .ok_or_else(|| EapError::TlsError("MSK not available".into()))?,
+                            session_id: vec![EapType::Tls.value()],
                         })
                     }
                 }
@@ -217,6 +218,7 @@ impl EapMethod for EapTls {
                                 .msk
                                 .take()
                                 .ok_or_else(|| EapError::TlsError("MSK not available".into()))?,
+                            session_id: vec![EapType::Tls.value()],
                         })
                     }
                 }
@@ -419,8 +421,9 @@ mod tests {
         let result = method.handle_request(2, &server_data, &ctx).unwrap();
 
         match result {
-            EapMethodOutput::Success { msk } => {
+            EapMethodOutput::Success { msk, session_id } => {
                 assert!(msk.len() >= 64);
+                assert!(!session_id.is_empty());
             }
             _ => panic!("expected Success, got {:?}", result),
         }

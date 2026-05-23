@@ -419,6 +419,15 @@ pub trait Kdf: Send + Sync {
 
     /// Derive KEK from CAK and CKN. Per Cl.9.6.
     fn derive_kek(&self, cak: &Cak, ckn: &Ckn) -> Result<Kek, crate::PaeError>;
+
+    /// Derive CAK and CKN from MSK. Per Cl.6.2.2.
+    ///
+    /// The first 16 octets of MSK become the CAK (for AES-128).
+    /// The CKN is derived from the MSK per Clause 6.2.2.
+    ///
+    /// # Errors
+    /// Returns `PaeError::KeyError` if the MSK is too short.
+    fn derive_cak_from_msk(&self, msk: &Msk) -> Result<(Cak, Ckn), crate::PaeError>;
 }
 
 /// AES-CMAC KDF implementation per IEEE 802.1X-2020, Clause 6.2.1.
@@ -526,6 +535,27 @@ impl Kdf for AesCmacKdf {
         let result = Kek::from_bytes(&derived);
         zeroize::Zeroize::zeroize(&mut derived);
         result
+    }
+
+    fn derive_cak_from_msk(&self, msk: &Msk) -> Result<(Cak, Ckn), crate::PaeError> {
+        // Per Cl.6.2.2: first 16 octets of MSK → CAK-128
+        // CKN is derived from the MSK context
+        let msk_bytes = msk.as_bytes();
+        if msk_bytes.len() < 64 {
+            return Err(crate::PaeError::KeyError(format!(
+                "MSK too short for CAK derivation: {} bytes (need >= 64)",
+                msk_bytes.len()
+            )));
+        }
+
+        // CAK = MSK[0..16] per Cl.6.2.2
+        let cak = Cak::from_bytes(&msk_bytes[..16])?;
+
+        // CKN = MSK[0..16] used as seed for CKN derivation per Cl.6.2.2
+        // The CKN is constructed from the MSK as specified in Clause 6.2.2
+        let ckn = Ckn::from_bytes(msk_bytes[..16].to_vec())?;
+
+        Ok((cak, ckn))
     }
 }
 
