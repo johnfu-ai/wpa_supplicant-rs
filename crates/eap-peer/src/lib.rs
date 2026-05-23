@@ -75,3 +75,6 @@ pub use peer::{
 
 #[cfg(feature = "eap-tls")]
 pub use eap_tls::{EapTls, EapTlsState, TlsEngine};
+
+#[cfg(feature = "eap-peap")]
+pub use eap_peap::{EapPeap, EapPeapState};

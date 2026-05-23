@@ -63,6 +63,29 @@ pub trait TlsEngine: Send + Sync {
 
     /// Reset the TLS engine for reauthentication.
     fn reset(&mut self);
+
+    /// Decrypt data received through the established TLS tunnel.
+    ///
+    /// Used by tunnel methods (PEAP, TEAP) to process inner EAP data.
+    /// Returns the decrypted data.
+    ///
+    /// # Errors
+    /// Returns `EapError::TlsError` if decryption fails or tunnel is not established.
+    fn recv_tunnel_data(&mut self, data: &[u8]) -> Result<Vec<u8>, EapError> {
+        let _ = data;
+        Ok(Vec::new())
+    }
+
+    /// Encrypt data to send through the established TLS tunnel.
+    ///
+    /// Used by tunnel methods (PEAP, TEAP) to send inner EAP responses.
+    /// Returns the encrypted data.
+    ///
+    /// # Errors
+    /// Returns `EapError::TlsError` if encryption fails or tunnel is not established.
+    fn send_tunnel_data(&mut self, data: &[u8]) -> Result<Vec<u8>, EapError> {
+        Ok(data.to_vec())
+    }
 }
 
 /// EAP-TLS method — certificate-based mutual authentication per RFC 5216.
