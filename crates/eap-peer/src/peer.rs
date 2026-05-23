@@ -233,6 +233,14 @@ impl EapPacket {
         let identifier = raw[1];
         let length = u16::from_be_bytes([raw[2], raw[3]]) as usize;
 
+        if length > Self::MAX_SIZE {
+            return Err(super::EapError::InvalidPacket(format!(
+                "EAP packet length ({}) exceeds maximum ({})",
+                length,
+                Self::MAX_SIZE
+            )));
+        }
+
         if raw.len() < length {
             return Err(super::EapError::InvalidPacket(format!(
                 "EAP packet length field ({}) exceeds buffer ({})",
@@ -304,16 +312,39 @@ impl EapPacket {
 ///
 /// Anti-corruption layer: EAP methods use this; PAE core never sees TLS internals.
 /// Per ADR-FF-006 (#78).
-#[derive(Debug, Clone)]
 pub struct TlsClientConfig {
     /// Client certificate chain (PEM bytes).
     pub cert_chain: Vec<Vec<u8>>,
     /// Client private key (PEM bytes).
+    /// Not redacted in Debug to avoid credential leakage.
     pub private_key: Vec<u8>,
     /// Trusted CA certificates (PEM bytes).
     pub ca_certs: Vec<Vec<u8>>,
     /// Whether to verify server certificate.
+    /// Per RFC 5216/RFC 7170: SHOULD be `true` to prevent MITM attacks.
     pub verify_server: bool,
+}
+
+impl std::fmt::Debug for TlsClientConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TlsClientConfig")
+            .field("cert_chain", &format!("[{} cert(s)]", self.cert_chain.len()))
+            .field("private_key", &"[REDACTED]")
+            .field("ca_certs", &format!("[{} cert(s)]", self.ca_certs.len()))
+            .field("verify_server", &self.verify_server)
+            .finish()
+    }
+}
+
+impl Clone for TlsClientConfig {
+    fn clone(&self) -> Self {
+        Self {
+            cert_chain: self.cert_chain.clone(),
+            private_key: self.private_key.clone(),
+            ca_certs: self.ca_certs.clone(),
+            verify_server: self.verify_server,
+        }
+    }
 }
 
 /// EAP method trait — interface for pluggable EAP methods.
@@ -1125,12 +1156,30 @@ mod tests {
     fn test_tls_client_config() {
         let config = TlsClientConfig {
             cert_chain: vec![b"cert".to_vec()],
-            private_key: b"key".to_vec(),
+            private_key: b"secret_key".to_vec(),
             ca_certs: vec![b"ca".to_vec()],
             verify_server: true,
         };
         assert!(!config.cert_chain.is_empty());
         assert!(config.verify_server);
+
+        // SEC-EAP-001: private_key must be redacted in Debug output
+        let debug_str = format!("{:?}", config);
+        assert!(!debug_str.contains("secret_key"));
+        assert!(debug_str.contains("[REDACTED]"));
+    }
+
+    /// Verifies: SEC-EAP-002
+    /// EAP packet with length field exceeding MAX_SIZE is rejected.
+    #[test]
+    fn test_eap_packet_exceeds_max_size() {
+        // Length field = 1501, but buffer is only 4 bytes
+        let raw = [1u8, 1, 0x05, 0xDD]; // length = 1501
+        let result = EapPacket::decode(&raw);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(matches!(err, crate::EapError::InvalidPacket(_)));
+        assert!(err.to_string().contains("maximum"));
     }
 
     /// Verifies: #38 (REQ-F-EAP-001)
