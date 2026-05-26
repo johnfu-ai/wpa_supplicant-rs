@@ -726,4 +726,30 @@ mod tests {
         lp.handle_eapol_announcement(&announcement).unwrap();
         assert_eq!(lp.selected_nid().unwrap().name(), "net2");
     }
+
+    // --- REQ-F-LOGON-004: NID in EAPOL-Start ---
+
+    /// Verifies: #36 (REQ-F-LOGON-004)
+    /// When authentication starts with a selected NID, the NID is passed
+    /// to start_authentication so it can be encoded in EAPOL-Start.
+    #[test]
+    fn test_start_authentication_includes_selected_nid() {
+        let group = make_nid_group("net1", b"nid-test", false);
+        let ctx = MockLogonContext::new();
+        let mut lp = LogonProcess::new(ctx, vec![group], false, false);
+
+        // Select a NID via announcement
+        let announcement = vec![AnnouncementNid {
+            id: b"nid-test".to_vec(),
+            supports_psk: false,
+        }];
+        lp.handle_announcement(&announcement).unwrap();
+        assert_eq!(lp.selected_nid().unwrap().id(), b"nid-test");
+
+        // Link up triggers authentication — should pass the selected NID
+        lp.ctx.auth_started.store(false, Ordering::SeqCst);
+        lp.link_changed(true).unwrap();
+        assert!(lp.ctx.auth_started.load(Ordering::SeqCst));
+        assert_eq!(lp.ctx.auth_nid.lock().unwrap().as_deref(), Some(b"nid-test".as_slice()));
+    }
 }

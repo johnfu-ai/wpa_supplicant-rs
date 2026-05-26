@@ -188,6 +188,33 @@ impl EapolFrame {
         }
     }
 
+    /// Create an EAPOL-Start frame with NID TLV. Per Cl.11.6 and Cl.10.16.
+    ///
+    /// Implements: #36 (REQ-F-LOGON-004)
+    /// The NID TLV contains the selected Network Identifier so the
+    /// authenticator knows which network the supplicant wants.
+    ///
+    /// # Errors
+    /// Returns `EapolError::InvalidFrame` if the NID is too long.
+    pub fn start_with_nid(nid: &[u8]) -> Result<Self, EapolError> {
+        // NID TLV format: type(1) + length(2) + nid_bytes
+        if nid.len() > 255 {
+            return Err(EapolError::InvalidFrame(format!(
+                "NID too long for TLV: {} > 255",
+                nid.len()
+            )));
+        }
+        let mut body = Vec::with_capacity(3 + nid.len());
+        body.push(0x01); // TLV type: NID Set
+        body.extend_from_slice(&(nid.len() as u16).to_be_bytes());
+        body.extend_from_slice(nid);
+        Ok(Self {
+            version: Self::DEFAULT_VERSION,
+            packet_type: EapolPacketType::EapolStart,
+            body,
+        })
+    }
+
     /// Create an EAPOL-Logoff frame. Per Cl.11.
     pub fn logoff() -> Self {
         Self {
@@ -229,6 +256,38 @@ mod tests {
         assert_eq!(encoded[0], 3); // version 3
         assert_eq!(encoded[1], 0x01); // EAPOL-Start
         assert_eq!(u16::from_be_bytes([encoded[2], encoded[3]]), 0); // body length = 0
+    }
+
+    /// Verifies: #36 (REQ-F-LOGON-004)
+    /// EAPOL-Start with NID TLV encodes the NID in the body.
+    #[test]
+    fn test_eapol_start_with_nid() {
+        let nid = b"test-nid";
+        let frame = EapolFrame::start_with_nid(nid).unwrap();
+        assert_eq!(frame.packet_type, EapolPacketType::EapolStart);
+
+        // Body should contain: type(1) + length(2) + nid
+        assert_eq!(frame.body[0], 0x01); // TLV type: NID Set
+        assert_eq!(
+            u16::from_be_bytes([frame.body[1], frame.body[2]]),
+            8 // "test-nid" length
+        );
+        assert_eq!(&frame.body[3..], nid);
+
+        // Verify round-trip through encode/decode
+        let encoded = frame.encode().unwrap();
+        let decoded = EapolFrame::decode(&encoded).unwrap();
+        assert_eq!(decoded.packet_type, EapolPacketType::EapolStart);
+        assert_eq!(decoded.body, frame.body);
+    }
+
+    /// Verifies: #36 (REQ-F-LOGON-004)
+    /// EAPOL-Start with NID rejects too-long NID.
+    #[test]
+    fn test_eapol_start_nid_too_long() {
+        let nid = vec![0xAA; 256];
+        let result = EapolFrame::start_with_nid(&nid);
+        assert!(result.is_err());
     }
 
     /// Verifies: EAPOL-Logoff frame encodes correctly.
