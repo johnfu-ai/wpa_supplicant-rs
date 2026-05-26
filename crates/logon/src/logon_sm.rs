@@ -10,6 +10,7 @@ use std::time::Duration;
 
 use pae::{Cak, Ckn, CpState, Msk, PaeEvent, TimerWheel};
 
+use crate::cak_cache::CakCache;
 use crate::nid::NidGroup;
 use crate::LogonError;
 
@@ -100,6 +101,8 @@ pub struct LogonProcess<C: LogonContext> {
     allow_psk: bool,
     /// NID identifiers to ignore from announcements (filtering list).
     ignore_nids: Vec<Vec<u8>>,
+    /// CAK cache for pre-shared key acceleration.
+    cak_cache: CakCache,
     /// Whether link is up.
     link_up: bool,
     /// Whether the authenticate variable is set (user wants authentication).
@@ -123,6 +126,7 @@ impl<C: LogonContext> LogonProcess<C> {
             allow_unsecured,
             allow_psk,
             ignore_nids: Vec::new(),
+            cak_cache: CakCache::new(),
             link_up: false,
             authenticate: false,
             timers: TimerWheel::new(),
@@ -133,6 +137,11 @@ impl<C: LogonContext> LogonProcess<C> {
     /// Set the NID ignore list for announcement filtering. Per Cl.12.
     pub fn set_ignore_nids(&mut self, nids: Vec<Vec<u8>>) {
         self.ignore_nids = nids;
+    }
+
+    /// Mutable access to the CAK cache. Per Cl.12.6.
+    pub fn cak_cache_mut(&mut self) -> &mut CakCache {
+        &mut self.cak_cache
     }
 
     /// Current Logon state.
@@ -750,6 +759,36 @@ mod tests {
         lp.ctx.auth_started.store(false, Ordering::SeqCst);
         lp.link_changed(true).unwrap();
         assert!(lp.ctx.auth_started.load(Ordering::SeqCst));
-        assert_eq!(lp.ctx.auth_nid.lock().unwrap().as_deref(), Some(b"nid-test".as_slice()));
+        assert_eq!(
+            lp.ctx.auth_nid.lock().unwrap().as_deref(),
+            Some(b"nid-test".as_slice())
+        );
+    }
+
+    // --- REQ-F-LOGON-005: CAK Cache Management ---
+
+    /// Verifies: #37 (REQ-F-LOGON-005)
+    /// AC3: LogonProcess provides access to CAK cache for MKA participant creation.
+    #[test]
+    fn test_logon_process_cak_cache_access() {
+        let ctx = MockLogonContext::new();
+        let mut lp = LogonProcess::new(ctx, vec![], false, true);
+
+        let cak = pae::Cak::from_bytes(&[0x0A; 16]).unwrap();
+        let ckn = pae::Ckn::from_bytes(vec![0x0B; 16]).unwrap();
+        let now = Duration::from_secs(100);
+
+        let entry = crate::CakCacheEntry::new(
+            cak,
+            ckn.clone(),
+            pae::CipherSuite::GcmAes128,
+            now,
+            Duration::from_secs(3600),
+        );
+        lp.cak_cache_mut().insert(entry);
+
+        let found = lp.cak_cache_mut().lookup(&ckn, now);
+        assert!(found.is_some());
+        assert_eq!(found.unwrap().cipher_suite(), pae::CipherSuite::GcmAes128);
     }
 }

@@ -18,6 +18,9 @@ pub mod logon_sm;
 /// NID (Network Identity) group types per IEEE 802.1X-2020, Clause 12.5.
 pub mod nid;
 
+/// CAK Cache per IEEE 802.1X-2020, Clause 12.6.
+pub mod cak_cache;
+
 /// Error type for Logon Process operations.
 ///
 /// Per ADR-ERR-005 (#77).
@@ -65,5 +68,6 @@ pub enum LogonError {
     Pae(#[from] pae::PaeError),
 }
 
+pub use cak_cache::{CakCache, CakCacheEntry};
 pub use logon_sm::{AnnouncementNid, LogonContext, LogonProcess, LogonState};
 pub use nid::NidGroup;

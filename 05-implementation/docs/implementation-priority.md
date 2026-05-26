@@ -73,7 +73,7 @@ Phase 05 — TDD implementation order based on crate dependency graph and protoc
 | 34 | REQ-F-LOGON-002 | NID Selection | `logon` | LOGON-001 | Done |
 | 35 | REQ-F-LOGON-003 | EAPOL-Announcement Reception | `logon` | LOGON-001, EAPOL-001 | Done |
 | 36 | REQ-F-LOGON-004 | NID in EAPOL-Start | `logon` | LOGON-002, PAE-005 | Done |
-| 37 | REQ-F-LOGON-005 | CAK Cache Management | `logon` | MKA-001, MKA-009 | — |
+| 37 | REQ-F-LOGON-005 | CAK Cache Management | `logon` | MKA-001, MKA-009 | Done |
 
 ## Usage with /tdd-compile
 

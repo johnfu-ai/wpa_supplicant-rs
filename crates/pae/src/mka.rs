@@ -93,6 +93,12 @@ pub struct Ckn {
     value: Vec<u8>,
 }
 
+impl std::hash::Hash for Ckn {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.value.hash(state);
+    }
+}
+
 impl Ckn {
     /// Maximum CKN length per IEEE 802.1X-2020, Clause 9.3.1.
     const MAX_LEN: usize = 32;
