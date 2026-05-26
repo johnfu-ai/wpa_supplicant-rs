@@ -3,7 +3,7 @@
 //! Implements IEEE 802.1X-2020 Clause 8 — Supplicant PAE state machine
 //! and Clause 11 — EAPOL frame types.
 //!
-//! Implements: #11 (REQ-F-PAE-001), #12 (REQ-F-PAE-002), #13 (REQ-F-PAE-003), #14 (REQ-F-PAE-004), #15 (REQ-F-PAE-005), #16 (REQ-F-PAE-006), #17 (REQ-F-PAE-007), #18 (REQ-F-PAE-008), #44 (REQ-F-EAPOL-001), #45 (REQ-F-EAPOL-002), #46 (REQ-F-EAPOL-003)
+//! Implements: #11 (REQ-F-PAE-001), #12 (REQ-F-PAE-002), #13 (REQ-F-PAE-003), #14 (REQ-F-PAE-004), #15 (REQ-F-PAE-005), #16 (REQ-F-PAE-006), #17 (REQ-F-PAE-007), #18 (REQ-F-PAE-008), #44 (REQ-F-EAPOL-001), #45 (REQ-F-EAPOL-002), #46 (REQ-F-EAPOL-003), #35 (REQ-F-LOGON-003)
 //! Architecture: #74 (ADR-SM-002), #79 (ADR-EVT-007)
 
 #![warn(missing_docs)]
@@ -19,6 +19,9 @@ pub mod transmitter;
 
 /// EAPOL frame reception and dispatch per IEEE 802.1X-2020, Clause 11.1.
 pub mod receiver;
+
+/// EAPOL-Announcement parsing per IEEE 802.1X-2020, Clauses 10.3 and 11.12.
+pub mod announcement;
 
 /// Error type for EAPOL supplicant operations.
 ///
@@ -56,6 +59,7 @@ pub enum EapolError {
 }
 
 // Re-export key types for convenience
+pub use announcement::{AccessStatus, AnnouncementNidEntry, EapolAnnouncement};
 pub use frame::{EapolFrame, EapolPacketType, EapolVersion};
 pub use receiver::{
     AnnouncementHandler, DispatchResult, EapHandler, EapolReceiver, FrameReceiver, MkaHandler,
