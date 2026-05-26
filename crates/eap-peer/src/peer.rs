@@ -328,7 +328,10 @@ pub struct TlsClientConfig {
 impl std::fmt::Debug for TlsClientConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("TlsClientConfig")
-            .field("cert_chain", &format!("[{} cert(s)]", self.cert_chain.len()))
+            .field(
+                "cert_chain",
+                &format!("[{} cert(s)]", self.cert_chain.len()),
+            )
             .field("private_key", &"[REDACTED]")
             .field("ca_certs", &format!("[{} cert(s)]", self.ca_certs.len()))
             .field("verify_server", &self.verify_server)

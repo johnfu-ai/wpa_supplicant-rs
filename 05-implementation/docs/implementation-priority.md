@@ -69,7 +69,7 @@ Phase 05 — TDD implementation order based on crate dependency graph and protoc
 
 | # | REQ-F | Title | Crate | Depends On | Status |
 |---|---|---|---|---|---|
-| 33 | REQ-F-LOGON-001 | Logon Process State Machine | `logon` | PAE-001, CP-001 | — |
+| 33 | REQ-F-LOGON-001 | Logon Process State Machine | `logon` | PAE-001, CP-001 | Done |
 | 34 | REQ-F-LOGON-002 | NID Selection | `logon` | LOGON-001 | — |
 | 35 | REQ-F-LOGON-003 | EAPOL-Announcement Reception | `logon` | LOGON-001, EAPOL-001 | — |
 | 36 | REQ-F-LOGON-004 | NID in EAPOL-Start | `logon` | LOGON-002, PAE-005 | — |
