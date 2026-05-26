@@ -65,5 +65,5 @@ pub enum LogonError {
     Pae(#[from] pae::PaeError),
 }
 
-pub use logon_sm::{LogonContext, LogonProcess, LogonState};
+pub use logon_sm::{AnnouncementNid, LogonContext, LogonProcess, LogonState};
 pub use nid::NidGroup;
