@@ -847,6 +847,7 @@ dependencies = [
  "logon",
  "pae",
  "serde",
+ "serde_json",
  "tempfile",
  "toml",
  "tracing",

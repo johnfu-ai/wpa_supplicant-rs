@@ -10,6 +10,9 @@
 //! No copyrighted content from the standard is reproduced.
 
 mod config;
+pub mod control;
+pub mod network_io;
+mod supplicant;
 
 use tracing_subscriber::EnvFilter;
 
@@ -17,6 +20,9 @@ pub use config::{
     Config, ControlConfig, ControlType, EapConfig, EapMethodConfig, LoggingConfig, LogonConfig,
     MacsecConfig, NidGroupConfig,
 };
+pub use control::{ControlCommand, ControlInterface};
+pub use network_io::NetworkIo;
+pub use supplicant::{Supplicant, SupplicantState};
 
 fn main() {
     tracing_subscriber::fmt()
