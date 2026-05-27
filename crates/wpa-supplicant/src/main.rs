@@ -13,6 +13,7 @@ mod config;
 pub mod control;
 mod logging;
 pub mod network_io;
+mod shutdown;
 mod supplicant;
 
 pub use config::{
@@ -22,12 +23,16 @@ pub use config::{
 pub use control::{ControlCommand, ControlInterface};
 pub use logging::Logging;
 pub use network_io::NetworkIo;
+pub use shutdown::ShutdownHandler;
 pub use supplicant::{Supplicant, SupplicantState};
 
 fn main() {
     let logging = Logging::init("info").expect("failed to initialize logging");
 
     tracing::info!("wpa_supplicant-rs starting");
+
+    let shutdown = ShutdownHandler::install().expect("failed to install signal handlers");
+
     // TODO: Load config, create supplicant, run event loop
-    let _ = logging;
+    let _ = (logging, shutdown);
 }
