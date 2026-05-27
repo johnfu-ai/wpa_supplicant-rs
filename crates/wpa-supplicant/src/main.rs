@@ -11,24 +11,23 @@
 
 mod config;
 pub mod control;
+mod logging;
 pub mod network_io;
 mod supplicant;
-
-use tracing_subscriber::EnvFilter;
 
 pub use config::{
     Config, ControlConfig, ControlType, EapConfig, EapMethodConfig, LoggingConfig, LogonConfig,
     MacsecConfig, NidGroupConfig,
 };
 pub use control::{ControlCommand, ControlInterface};
+pub use logging::Logging;
 pub use network_io::NetworkIo;
 pub use supplicant::{Supplicant, SupplicantState};
 
 fn main() {
-    tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::from_default_env())
-        .init();
+    let logging = Logging::init("info").expect("failed to initialize logging");
 
     tracing::info!("wpa_supplicant-rs starting");
-    // TODO: Initialize supplicant PAE, EAPOL, and event loop
+    // TODO: Load config, create supplicant, run event loop
+    let _ = logging;
 }
