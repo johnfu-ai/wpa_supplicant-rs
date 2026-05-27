@@ -243,4 +243,122 @@ mod tests {
         assert_eq!(MKA_LIFE_TIME, Duration::from_millis(6000));
         assert_eq!(SAK_RETIRE_TIME, Duration::from_millis(3000));
     }
+
+    /// Verifies: #48 (REQ-NF-PERF-001)
+    /// MKA Hello timer fires at exactly 2000ms.
+    /// Timer fires no earlier than MKA_HELLO_TIME and no later than
+    /// MKA_HELLO_TIME + 1 tick granularity.
+    #[test]
+    fn test_perf_hello_time_accuracy() {
+        let mut tw = TimerWheel::new();
+        tw.schedule(TimerId::MkaHello, MKA_HELLO_TIME);
+
+        // Must NOT fire before 2000ms
+        let expired_before = tw.advance_to(MKA_HELLO_TIME - Duration::from_millis(1));
+        assert!(
+            !expired_before.contains(&TimerId::MkaHello),
+            "Hello timer must not fire before 2000ms"
+        );
+
+        // Must fire AT exactly 2000ms
+        let expired_at = tw.advance_to(MKA_HELLO_TIME);
+        assert!(
+            expired_at.contains(&TimerId::MkaHello),
+            "Hello timer must fire at exactly 2000ms"
+        );
+    }
+
+    /// Verifies: #48 (REQ-NF-PERF-001)
+    /// MKA Bounded Hello timer fires at exactly 500ms.
+    #[test]
+    fn test_perf_bounded_hello_accuracy() {
+        let mut tw = TimerWheel::new();
+        tw.schedule(TimerId::MkaBoundedHello, MKA_BOUNDED_HELLO_TIME);
+
+        // Must NOT fire before 500ms
+        let expired_before = tw.advance_to(MKA_BOUNDED_HELLO_TIME - Duration::from_millis(1));
+        assert!(
+            !expired_before.contains(&TimerId::MkaBoundedHello),
+            "Bounded Hello must not fire before 500ms"
+        );
+
+        // Must fire AT exactly 500ms
+        let expired_at = tw.advance_to(MKA_BOUNDED_HELLO_TIME);
+        assert!(
+            expired_at.contains(&TimerId::MkaBoundedHello),
+            "Bounded Hello must fire at exactly 500ms"
+        );
+    }
+
+    /// Verifies: #48 (REQ-NF-PERF-001)
+    /// Periodic Hello timer rescheduling fires at correct intervals
+    /// over multiple cycles. Simulates 10 Hello intervals (20 seconds).
+    #[test]
+    fn test_perf_hello_periodic_accuracy() {
+        let mut tw = TimerWheel::new();
+
+        for i in 0..10 {
+            let base = Duration::from_millis(2000 * i);
+            tw.schedule(TimerId::MkaHello, MKA_HELLO_TIME);
+
+            // Advance to just before expiry
+            let expired = tw.advance_to(base + MKA_HELLO_TIME - Duration::from_millis(1));
+            assert!(
+                !expired.contains(&TimerId::MkaHello),
+                "cycle {i}: must not fire before 2000ms"
+            );
+
+            // Advance to exactly expiry
+            let expired = tw.advance_to(base + MKA_HELLO_TIME);
+            assert!(
+                expired.contains(&TimerId::MkaHello),
+                "cycle {i}: must fire at 2000ms"
+            );
+        }
+    }
+
+    /// Verifies: #48 (REQ-NF-PERF-001)
+    /// Timer wheel advance_to execution is bounded (O(k log n)).
+    /// With 4 concurrent timers at staggered intervals, advancing past
+    /// all of them should complete in sub-millisecond wall-clock time.
+    #[test]
+    fn test_perf_advance_bounded_execution() {
+        let mut tw = TimerWheel::new();
+
+        // Schedule all 4 timer types at staggered intervals
+        tw.schedule(TimerId::MkaHello, MKA_HELLO_TIME);
+        tw.schedule(TimerId::MkaBoundedHello, MKA_BOUNDED_HELLO_TIME);
+        tw.schedule(TimerId::MkaLife, MKA_LIFE_TIME);
+        tw.schedule(TimerId::SakRetire, SAK_RETIRE_TIME);
+
+        let start = std::time::Instant::now();
+
+        // Advance through 1000 cycles of all 4 timers (simulating 6 seconds each cycle)
+        let mut total_expired = 0;
+        for cycle in 0..1000u64 {
+            let base = Duration::from_millis(6000 * cycle);
+            tw.schedule(TimerId::MkaHello, MKA_HELLO_TIME);
+            tw.schedule(TimerId::MkaBoundedHello, MKA_BOUNDED_HELLO_TIME);
+            tw.schedule(TimerId::MkaLife, MKA_LIFE_TIME);
+            tw.schedule(TimerId::SakRetire, SAK_RETIRE_TIME);
+            let expired = tw.advance_to(base + MKA_LIFE_TIME);
+            total_expired += expired.len();
+        }
+
+        let elapsed = start.elapsed();
+
+        // Should have expired all 4 timers per cycle
+        assert!(
+            total_expired >= 4000,
+            "expected >= 4000 expired, got {}",
+            total_expired
+        );
+
+        // Wall-clock time should be well under 100ms for 1000 cycles
+        assert!(
+            elapsed < Duration::from_millis(100),
+            "1000 timer cycles took {:?}, expected < 100ms",
+            elapsed
+        );
+    }
 }

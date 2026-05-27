@@ -49,8 +49,8 @@ wiring together the library crates via the event loop per ADR-EVT-007 (#79).
 
 | # | REQ-NF | Title | Crate | Depends On | Status |
 |---|---|---|---|---|---|
-| 72 | REQ-NF-DEPLOY-005 | Control Interface (Unix socket) | `wpa-supplicant` | P6 | Todo |
-| 71 | REQ-NF-DEPLOY-004 | systemd Integration | `wpa-supplicant` | DEPLOY-005 | Todo |
+| 72 | REQ-NF-DEPLOY-005 | Control Interface (Unix socket) | `wpa-supplicant` | P6 | Done |
+| 71 | REQ-NF-DEPLOY-004 | systemd Integration | `wpa-supplicant` | DEPLOY-005 | Done |
 
 ### Notes
 
