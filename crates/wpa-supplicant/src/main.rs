@@ -15,6 +15,8 @@ mod logging;
 pub mod network_io;
 mod shutdown;
 mod supplicant;
+#[cfg(feature = "systemd")]
+mod systemd;
 
 pub use config::{
     Config, ControlConfig, ControlType, EapConfig, EapMethodConfig, LoggingConfig, LogonConfig,
@@ -25,6 +27,9 @@ pub use logging::Logging;
 pub use network_io::NetworkIo;
 pub use shutdown::ShutdownHandler;
 pub use supplicant::{Supplicant, SupplicantState};
+
+#[cfg(feature = "systemd")]
+pub use systemd::{generate_socket_unit, generate_unit_file, SystemdActivation};
 
 fn main() {
     let logging = Logging::init("info").expect("failed to initialize logging");
