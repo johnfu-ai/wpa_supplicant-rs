@@ -29,8 +29,8 @@ wiring together the library crates via the event loop per ADR-EVT-007 (#79).
 |---|---|---|---|---|---|
 | 70 | REQ-NF-DEPLOY-003 | Configuration File Support (TOML) | `wpa-supplicant` | — | Done |
 | — | — | Supplicant Assembly + Event Loop | `wpa-supplicant` | DEPLOY-003 | Done |
-| 68 | REQ-NF-DEPLOY-001 | Structured Logging | `wpa-supplicant` | Event Loop | Todo |
-| 69 | REQ-NF-DEPLOY-002 | Graceful Shutdown | `wpa-supplicant` | Event Loop | Todo |
+| 68 | REQ-NF-DEPLOY-001 | Structured Logging | `wpa-supplicant` | Event Loop | Done |
+| 69 | REQ-NF-DEPLOY-002 | Graceful Shutdown | `wpa-supplicant` | Event Loop | Done |
 
 ### Notes
 
