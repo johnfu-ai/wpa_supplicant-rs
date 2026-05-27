@@ -2,8 +2,21 @@
 //!
 //! A Rust implementation of the IEEE 802.1X-2020 supplicant role,
 //! supporting EAPOL, EAP peer methods, MKA, CP, and the Logon Process.
+//!
+//! Implements: #70 (REQ-NF-DEPLOY-003: Configuration File Support)
+//! Architecture: #85 (ARC-C-WPA-005)
+//!
+//! IMPORTANT: This implementation is based on understanding of IEEE 802.1X-2020.
+//! No copyrighted content from the standard is reproduced.
+
+mod config;
 
 use tracing_subscriber::EnvFilter;
+
+pub use config::{
+    Config, ControlConfig, ControlType, EapConfig, EapMethodConfig, LoggingConfig, LogonConfig,
+    MacsecConfig, NidGroupConfig,
+};
 
 fn main() {
     tracing_subscriber::fmt()

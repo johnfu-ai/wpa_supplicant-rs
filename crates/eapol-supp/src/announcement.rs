@@ -117,10 +117,7 @@ impl EapolAnnouncement {
     /// Parse a NID Set TLV payload into NID entries.
     ///
     /// Each NID entry: length(1) + id(length bytes) + capabilities(1).
-    fn parse_nid_set(
-        data: &[u8],
-        nids: &mut Vec<AnnouncementNidEntry>,
-    ) -> Result<(), EapolError> {
+    fn parse_nid_set(data: &[u8], nids: &mut Vec<AnnouncementNidEntry>) -> Result<(), EapolError> {
         let mut offset = 0;
         while offset < data.len() {
             if offset + 1 > data.len() {
@@ -216,8 +213,7 @@ mod tests {
     #[test]
     fn test_parse_announcement_tlv_overflow() {
         let body = vec![
-            0x00,
-            0x01, 0x00, 0xFF, // TLV claims length 255 but body is short
+            0x00, 0x01, 0x00, 0xFF, // TLV claims length 255 but body is short
         ];
         let result = EapolAnnouncement::parse(&body);
         assert!(result.is_err());
@@ -228,8 +224,7 @@ mod tests {
     #[test]
     fn test_parse_announcement_unknown_tlv_skipped() {
         let body = vec![
-            0x00,
-            0x99, 0x00, 0x02, 0xDE, 0xAD, // unknown TLV type=0x99, length=2
+            0x00, 0x99, 0x00, 0x02, 0xDE, 0xAD, // unknown TLV type=0x99, length=2
             0x01, 0x00, 0x03, // NID Set TLV, length=3
             0x01, 0xCC, 0x00, // NID: len=1, id=0xCC, caps=0
         ];

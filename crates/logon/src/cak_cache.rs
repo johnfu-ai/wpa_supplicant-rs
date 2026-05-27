@@ -8,7 +8,7 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
-use pae::{Cak, Ckn, CipherSuite};
+use pae::{Cak, CipherSuite, Ckn};
 
 use crate::LogonError;
 
