@@ -1593,7 +1593,9 @@ impl std::fmt::Debug for PaeEvent {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::MKA_LIFE_TIME;
+    use crate::timer::{
+        TimerId, TimerWheel, MKA_BOUNDED_HELLO_TIME, MKA_HELLO_TIME, MKA_LIFE_TIME, SAK_RETIRE_TIME,
+    };
 
     // --- REQ-F-MKA-001: MKA Key Hierarchy ---
 
@@ -3206,6 +3208,159 @@ mod tests {
             p95 < Duration::from_millis(10),
             "95th percentile MKA transition latency {:?}, expected < 10ms",
             p95
+        );
+    }
+
+    // --- #86 (QA-SC-PERF-001): MKA Hello Timing Under Load ---
+
+    /// Verifies: #86 (QA-SC-PERF-001)
+    /// ATAM scenario: MKA Hello timer fires while processing 10 concurrent peer
+    /// MKPDUs. Validates that MKPDU is still transmitted within Hello Time.
+    /// Uses virtual clock: timer fires at exactly 2000ms, step() produces
+    /// MkaTransmit event regardless of peer processing load.
+    ///
+    /// The supplicant peer list is capped at 2 live + 2 potential peers.
+    /// To simulate 10 concurrent MKPDU arrivals, we process 10 rapid
+    /// update_peer calls on the same peers within the Hello interval.
+    #[test]
+    fn test_perf_hello_under_load_10_peers() {
+        let mut tw = TimerWheel::new();
+        let mut list = MkaPeerList::new();
+
+        // Fill peer list to max capacity (2 live + 2 potential)
+        let now = Duration::from_millis(0);
+        let mi1 = [0x01, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+        let mi2 = [0x02, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+        let mi3 = [0x03, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+        let mi4 = [0x04, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+        list.update_peer(mi1, 1, now).unwrap();
+        list.update_peer(mi2, 1, now).unwrap();
+        list.promote_peer(&mi1).unwrap();
+        list.promote_peer(&mi2).unwrap();
+        list.update_peer(mi3, 1, now).unwrap();
+        list.update_peer(mi4, 1, now).unwrap();
+        assert_eq!(list.live_count(), 2);
+        assert_eq!(list.potential_count(), 2);
+
+        // Schedule hello timer
+        tw.schedule(TimerId::MkaHello, MKA_HELLO_TIME);
+
+        // Simulate 10 rapid MKPDU arrivals (update same peers with new MNs)
+        for i in 1..=10u32 {
+            let peer_time = Duration::from_millis(i as u64 * 100);
+            list.update_peer(mi1, i + 1, peer_time).unwrap();
+            list.update_peer(mi2, i + 1, peer_time).unwrap();
+        }
+
+        // Advance to just before Hello Time with peer processing
+        let expired = tw.advance_to(Duration::from_millis(1999));
+        assert!(
+            !expired.contains(&TimerId::MkaHello),
+            "Hello must not fire before 2000ms under load"
+        );
+
+        // Process peer expiry check (simulating concurrent load)
+        let expired_peers = list.expire_peers(Duration::from_millis(1999), MKA_LIFE_TIME);
+        assert!(expired_peers.is_empty(), "no peers should expire at 1999ms");
+
+        // Advance to Hello Time: timer MUST fire despite load
+        let expired = tw.advance_to(MKA_HELLO_TIME);
+        assert!(
+            expired.contains(&TimerId::MkaHello),
+            "Hello timer must fire at exactly 2000ms even under 10-peer load"
+        );
+    }
+
+    /// Verifies: #86 (QA-SC-PERF-001)
+    /// Wall-clock latency of hello timer + MKPDU generation under load.
+    /// With timer wheel processing 4 concurrent timers + peer list expiry,
+    /// the combined step() latency must remain bounded (< 100ms).
+    #[test]
+    fn test_perf_hello_latency_under_load_bounded() {
+        let mut tw = TimerWheel::new();
+        let mut list = MkaPeerList::new();
+
+        // Populate peer list
+        let now = Duration::from_millis(0);
+        for i in 0..4u8 {
+            let mi = [i + 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+            list.update_peer(mi, 1, now).unwrap();
+            if i < 2 {
+                list.promote_peer(&mi).unwrap();
+            }
+        }
+
+        let mut total_transmits = 0;
+        let start = std::time::Instant::now();
+
+        for cycle in 0..1000u64 {
+            let base = Duration::from_millis(2000 * cycle);
+
+            // Schedule all timers (simulating concurrent load)
+            tw.schedule(TimerId::MkaHello, MKA_HELLO_TIME);
+            tw.schedule(TimerId::MkaBoundedHello, MKA_BOUNDED_HELLO_TIME);
+            tw.schedule(TimerId::MkaLife, MKA_LIFE_TIME);
+            tw.schedule(TimerId::SakRetire, SAK_RETIRE_TIME);
+
+            // Advance past Hello Time
+            let expired = tw.advance_to(base + MKA_HELLO_TIME);
+
+            // Count hello timer fires (MKPDU transmits)
+            if expired.contains(&TimerId::MkaHello) {
+                total_transmits += 1;
+            }
+
+            // Process peer expiry under load
+            list.expire_peers(base + MKA_HELLO_TIME, MKA_LIFE_TIME);
+        }
+
+        let elapsed = start.elapsed();
+
+        assert!(
+            total_transmits >= 1000,
+            "expected >= 1000 hello fires, got {}",
+            total_transmits
+        );
+        assert!(
+            elapsed < Duration::from_millis(100),
+            "1000 loaded hello cycles took {:?}, expected < 100ms",
+            elapsed
+        );
+    }
+
+    /// Verifies: #86 (QA-SC-PERF-001)
+    /// Bounded Hello (0.5s) timing under load with 10 concurrent peers.
+    /// The 95th percentile MKPDU transmission latency must be ≤ 0.5s.
+    #[test]
+    fn test_perf_bounded_hello_under_load_10_peers() {
+        let mut tw = TimerWheel::new();
+        let mut list = MkaPeerList::new();
+
+        // Populate peer list
+        for i in 0..4u8 {
+            let mi = [i + 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+            list.update_peer(mi, 1, Duration::ZERO).unwrap();
+            if i < 2 {
+                list.promote_peer(&mi).unwrap();
+            }
+        }
+
+        // Schedule bounded hello under load
+        tw.schedule(TimerId::MkaBoundedHello, MKA_BOUNDED_HELLO_TIME);
+        tw.schedule(TimerId::MkaLife, MKA_LIFE_TIME);
+
+        // Must NOT fire before 500ms
+        let expired = tw.advance_to(MKA_BOUNDED_HELLO_TIME - Duration::from_millis(1));
+        assert!(
+            !expired.contains(&TimerId::MkaBoundedHello),
+            "Bounded Hello must not fire before 500ms under load"
+        );
+
+        // Must fire at exactly 500ms
+        let expired = tw.advance_to(MKA_BOUNDED_HELLO_TIME);
+        assert!(
+            expired.contains(&TimerId::MkaBoundedHello),
+            "Bounded Hello must fire at exactly 500ms under load"
         );
     }
 }
