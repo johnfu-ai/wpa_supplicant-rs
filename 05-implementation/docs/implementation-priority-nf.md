@@ -64,11 +64,11 @@ wiring together the library crates via the event loop per ADR-EVT-007 (#79).
 
 | # | REQ-NF | Title | Crate | Depends On | Status |
 |---|---|---|---|---|---|
-| 48 | REQ-NF-PERF-001 | MKA Hello Interval (2.0s / 0.5s) | `pae` | — | Todo |
-| 49 | REQ-NF-PERF-002 | MKA Life Time (6.0s) | `pae` | — | Todo |
-| 50 | REQ-NF-PERF-003 | EAPOL Response Latency (100ms) | `eapol-supp` | P6 | Todo |
-| 51 | REQ-NF-PERF-004 | State Machine Transition Latency (10ms) | `pae` | — | Todo |
-| 86 | QA-SC-PERF-001 | MKA Hello Timing Under Load | `pae` | PERF-001 | Todo |
+| 48 | REQ-NF-PERF-001 | MKA Hello Interval (2.0s / 0.5s) | `pae` | — | Done |
+| 49 | REQ-NF-PERF-002 | MKA Life Time (6.0s) | `pae` | — | Done |
+| 50 | REQ-NF-PERF-003 | EAPOL Response Latency (100ms) | `eapol-supp` | P6 | Done |
+| 51 | REQ-NF-PERF-004 | State Machine Transition Latency (10ms) | `pae` | — | Done |
+| 86 | QA-SC-PERF-001 | MKA Hello Timing Under Load | `pae` | PERF-001 | Done |
 
 ### Notes
 
@@ -87,7 +87,7 @@ wiring together the library crates via the event loop per ADR-EVT-007 (#79).
 
 | # | REQ-NF | Title | Crate | Depends On | Status |
 |---|---|---|---|---|---|
-| 60 | REQ-NF-PORT-001 | Linux x86_64 and ARM64 | workspace | — | Todo |
+| 60 | REQ-NF-PORT-001 | Linux x86_64 and ARM64 | workspace | — | Done |
 | 61 | REQ-NF-PORT-002 | no_std Capability (Feature-Gated) | `pae` | — | Todo |
 
 ### Notes
