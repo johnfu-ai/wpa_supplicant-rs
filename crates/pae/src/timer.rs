@@ -361,4 +361,27 @@ mod tests {
             elapsed
         );
     }
+
+    /// Verifies: #49 (REQ-NF-PERF-002)
+    /// MKA Life timer fires at exactly 6000ms.
+    /// Timer must NOT fire before 6000ms and MUST fire at exactly 6000ms.
+    #[test]
+    fn test_perf_life_time_accuracy() {
+        let mut tw = TimerWheel::new();
+        tw.schedule(TimerId::MkaLife, MKA_LIFE_TIME);
+
+        // Must NOT fire before 6000ms
+        let expired_before = tw.advance_to(MKA_LIFE_TIME - Duration::from_millis(1));
+        assert!(
+            !expired_before.contains(&TimerId::MkaLife),
+            "Life timer must not fire before 6000ms"
+        );
+
+        // Must fire AT exactly 6000ms
+        let expired_at = tw.advance_to(MKA_LIFE_TIME);
+        assert!(
+            expired_at.contains(&TimerId::MkaLife),
+            "Life timer must fire at exactly 6000ms"
+        );
+    }
 }

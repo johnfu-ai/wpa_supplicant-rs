@@ -1593,6 +1593,7 @@ impl std::fmt::Debug for PaeEvent {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::MKA_LIFE_TIME;
 
     // --- REQ-F-MKA-001: MKA Key Hierarchy ---
 
@@ -2949,6 +2950,155 @@ mod tests {
         assert_eq!(p.state(), MkaState::Pending);
         assert!(p.is_key_server());
         assert!(events.contains(&PaeEvent::MkaSessionTerminated));
+    }
+
+    /// Verifies: #49 (REQ-NF-PERF-002)
+    /// Peer is NOT expired before MKA Life Time (6.0s).
+    /// At t=5999ms after last_rx, the peer must still be present.
+    #[test]
+    fn test_perf_life_time_not_expired_before_deadline() {
+        let mut list = MkaPeerList::new();
+        let mi = [0x01; 12];
+        let last_rx = Duration::from_millis(0);
+        list.update_peer(mi, 1, last_rx).unwrap();
+        list.promote_peer(&mi).unwrap();
+
+        // At 5999ms (1ms before MKA Life Time), peer must NOT be expired
+        let expired = list.expire_peers(Duration::from_millis(5999), MKA_LIFE_TIME);
+        assert!(
+            expired.is_empty(),
+            "peer must not expire before 6000ms, but got {:?} expired",
+            expired.len()
+        );
+        assert_eq!(list.live_count(), 1, "live peer must remain");
+    }
+
+    /// Verifies: #49 (REQ-NF-PERF-002)
+    /// Peer IS expired at exactly MKA Life Time (6.0s).
+    /// At t=6000ms after last_rx, the peer must be removed.
+    #[test]
+    fn test_perf_life_time_expired_at_deadline() {
+        let mut list = MkaPeerList::new();
+        let mi = [0x01; 12];
+        let last_rx = Duration::from_millis(0);
+        list.update_peer(mi, 1, last_rx).unwrap();
+        list.promote_peer(&mi).unwrap();
+
+        // At exactly 6000ms, peer MUST be expired
+        let expired = list.expire_peers(MKA_LIFE_TIME, MKA_LIFE_TIME);
+        assert_eq!(expired.len(), 1, "peer must expire at exactly 6000ms");
+        assert_eq!(expired[0], mi);
+        assert_eq!(list.live_count(), 0, "expired peer must be removed");
+    }
+
+    /// Verifies: #49 (REQ-NF-PERF-002)
+    /// Peer with recent liveness (within Hello Time) is NOT expired
+    /// even if the absolute time is past MKA Life Time from session start.
+    /// Liveness refreshes the expiry deadline.
+    #[test]
+    fn test_perf_life_time_liveness_refreshes_expiry() {
+        let mut list = MkaPeerList::new();
+        let mi = [0x01; 12];
+
+        // Peer first seen at t=0
+        list.update_peer(mi, 1, Duration::from_millis(0)).unwrap();
+        list.promote_peer(&mi).unwrap();
+
+        // Peer sends MKPDU at t=4000ms (refreshes liveness)
+        list.update_peer(mi, 2, Duration::from_millis(4000))
+            .unwrap();
+
+        // At t=9999ms (5999ms since last_rx at 4000ms), peer must NOT expire
+        let expired = list.expire_peers(Duration::from_millis(9999), MKA_LIFE_TIME);
+        assert!(
+            expired.is_empty(),
+            "peer with refreshed liveness must not expire before 6s from last_rx"
+        );
+
+        // At t=10000ms (6000ms since last_rx), peer MUST expire
+        let expired = list.expire_peers(Duration::from_millis(10000), MKA_LIFE_TIME);
+        assert_eq!(expired.len(), 1, "peer must expire at 6s after last_rx");
+    }
+
+    /// Verifies: #49 (REQ-NF-PERF-002)
+    /// Periodic peer expiry over 5 cycles with liveness refreshes.
+    /// Validates that expire_peers timing is accurate across multiple
+    /// expiry/refresh cycles (simulating 30 seconds of operation).
+    #[test]
+    fn test_perf_life_time_periodic_expiry() {
+        let mut list = MkaPeerList::new();
+
+        for cycle in 0..5u64 {
+            let mi = [cycle as u8; 12];
+            let base_ms = cycle * 7000; // 7s per cycle (6s life + 1s gap)
+
+            // Peer appears at cycle start
+            list.update_peer(mi, 1, Duration::from_millis(base_ms))
+                .unwrap();
+            list.promote_peer(&mi).unwrap();
+
+            // Check at 1ms before Life Time: peer must survive
+            let expired_before =
+                list.expire_peers(Duration::from_millis(base_ms + 5999), MKA_LIFE_TIME);
+            assert!(
+                !expired_before.iter().any(|e| *e == mi),
+                "cycle {cycle}: peer must not expire before 6s"
+            );
+
+            // Check at Life Time: peer must expire
+            let expired_at =
+                list.expire_peers(Duration::from_millis(base_ms + 6000), MKA_LIFE_TIME);
+            assert!(
+                expired_at.iter().any(|e| *e == mi),
+                "cycle {cycle}: peer must expire at 6s"
+            );
+        }
+    }
+
+    /// Verifies: #49 (REQ-NF-PERF-002)
+    /// expire_peers execution is bounded when processing many peers.
+    /// With 4 peers (2 live + 2 potential), repeated expiry over 1000 cycles
+    /// should complete in sub-millisecond wall-clock time.
+    #[test]
+    fn test_perf_expire_bounded_execution() {
+        let mut list = MkaPeerList::new();
+        let start = std::time::Instant::now();
+
+        let mut total_expired = 0;
+        for cycle in 0..1000u64 {
+            let base_ms = cycle * 6001;
+
+            // Add 2 potential + 2 live peers at cycle start
+            let mi1 = [0x01u8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, cycle as u8];
+            let mi2 = [0x02u8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, cycle as u8];
+            let mi3 = [0x03u8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, cycle as u8];
+            let mi4 = [0x04u8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, cycle as u8];
+
+            list = MkaPeerList::new(); // Reset each cycle to avoid capacity errors
+            let now = Duration::from_millis(base_ms);
+            list.update_peer(mi1, 1, now).unwrap();
+            list.update_peer(mi2, 1, now).unwrap();
+            list.promote_peer(&mi1).unwrap();
+            list.promote_peer(&mi2).unwrap();
+            list.update_peer(mi3, 1, now).unwrap();
+            list.update_peer(mi4, 1, now).unwrap();
+
+            // Advance past MKA Life Time
+            let expired = list.expire_peers(Duration::from_millis(base_ms + 6000), MKA_LIFE_TIME);
+            total_expired += expired.len();
+        }
+
+        let elapsed = start.elapsed();
+        assert!(
+            total_expired >= 4000,
+            "expected >= 4000 expired, got {}",
+            total_expired
+        );
+        assert!(
+            elapsed < Duration::from_millis(100),
+            "1000 expiry cycles took {:?}, expected < 100ms",
+            elapsed
+        );
     }
 
     /// Verifies: #26 (REQ-F-MKA-008)
