@@ -1170,4 +1170,144 @@ mod tests {
         pae.step().unwrap(); // Timeout → retry
         assert_eq!(pae.counters().auth_timeouts_while_authenticating, 1);
     }
+
+    // --- #50 (REQ-NF-PERF-003): EAPOL Response Latency ---
+
+    /// Verifies: #50 (REQ-NF-PERF-003)
+    /// Wall-clock time for handle_eapol + step processing is well under 100ms.
+    /// Measures the critical response path: EAPOL-EAP frame receipt through
+    /// state transition and any immediate response generation.
+    #[test]
+    fn test_perf_eapol_response_latency_single() {
+        let (mut pae, ctx) = create_pae();
+        pae.set_authenticate(true);
+        pae.step().unwrap(); // → Connecting
+
+        let eap_frame = EapolFrame::eap_packet(vec![0x01]);
+
+        let start = std::time::Instant::now();
+        pae.handle_eapol(&eap_frame).unwrap();
+        pae.step().unwrap();
+        let elapsed = start.elapsed();
+
+        assert!(
+            elapsed < Duration::from_millis(100),
+            "single EAPOL response path took {:?}, expected < 100ms",
+            elapsed
+        );
+        assert_eq!(pae.state(), PaeState::Authenticating);
+    }
+
+    /// Verifies: #50 (REQ-NF-PERF-003)
+    /// 95th percentile EAPOL response latency over 1000 cycles is ≤ 100ms.
+    /// Simulates repeated EAPOL-EAP frame processing to verify the response
+    /// path has bounded and predictable execution time.
+    #[test]
+    fn test_perf_eapol_response_latency_95th_percentile() {
+        let mut latencies = Vec::with_capacity(1000);
+
+        for _ in 0..1000 {
+            let (mut pae, ctx) = create_pae();
+            pae.set_authenticate(true);
+            pae.step().unwrap(); // → Connecting
+
+            let eap_frame = EapolFrame::eap_packet(vec![0x01]);
+
+            let start = std::time::Instant::now();
+            pae.handle_eapol(&eap_frame).unwrap();
+            pae.step().unwrap();
+            latencies.push(start.elapsed());
+        }
+
+        latencies.sort();
+
+        // 95th percentile index
+        let p95_idx = (latencies.len() as f64 * 0.95) as usize;
+        let p95 = latencies[p95_idx.min(latencies.len() - 1)];
+
+        assert!(
+            p95 < Duration::from_millis(100),
+            "95th percentile EAPOL response latency {:?}, expected < 100ms",
+            p95
+        );
+    }
+
+    /// Verifies: #50 (REQ-NF-PERF-003)
+    /// handle_eapol execution is bounded: processing 1000 frames
+    /// sequentially completes in sub-millisecond wall-clock time.
+    #[test]
+    fn test_perf_handle_eapol_bounded_execution() {
+        let (mut pae, ctx) = create_pae();
+        pae.set_authenticate(true);
+        pae.step().unwrap(); // → Connecting
+
+        let start = std::time::Instant::now();
+        let mut frames_processed = 0;
+
+        for _ in 0..1000 {
+            // Reset to Connecting state for each frame
+            if pae.state() != PaeState::Connecting {
+                pae.start_count = 0;
+                pae.state = PaeState::Connecting;
+                let now = ctx.now();
+                pae.start_timer(ActiveTimer::StartWhen, ctx.start_when, now);
+            }
+            let eap_frame = EapolFrame::eap_packet(vec![0x01]);
+            pae.handle_eapol(&eap_frame).unwrap();
+            frames_processed += 1;
+        }
+
+        let elapsed = start.elapsed();
+        assert_eq!(frames_processed, 1000);
+        assert!(
+            elapsed < Duration::from_millis(100),
+            "1000 handle_eapol calls took {:?}, expected < 100ms",
+            elapsed
+        );
+    }
+
+    /// Verifies: #50 (REQ-NF-PERF-003)
+    /// step() execution is bounded: 1000 step cycles with state transitions
+    /// complete in sub-millisecond wall-clock time.
+    #[test]
+    fn test_perf_step_bounded_execution() {
+        let (mut pae, ctx) = create_pae();
+        pae.set_authenticate(true);
+
+        let start = std::time::Instant::now();
+        let mut steps = 0;
+
+        for i in 0..1000u64 {
+            // Cycle through states to exercise all step() branches
+            match i % 4 {
+                0 => {
+                    // Disconnected → Connecting
+                    pae.state = PaeState::Disconnected;
+                    pae.set_authenticate(true);
+                }
+                1 => {
+                    // Connecting → Authenticating (via handle_eapol)
+                    if pae.state() == PaeState::Connecting {
+                        let eap_frame = EapolFrame::eap_packet(vec![0x01]);
+                        let _ = pae.handle_eapol(&eap_frame);
+                    }
+                }
+                2 => {
+                    // Advance timer to trigger timeout check
+                    ctx.advance_time(Duration::from_millis(1));
+                }
+                _ => {}
+            }
+            let _ = pae.step();
+            steps += 1;
+        }
+
+        let elapsed = start.elapsed();
+        assert_eq!(steps, 1000);
+        assert!(
+            elapsed < Duration::from_millis(100),
+            "1000 step() calls took {:?}, expected < 100ms",
+            elapsed
+        );
+    }
 }
