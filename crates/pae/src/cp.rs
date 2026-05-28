@@ -560,6 +560,7 @@ pub enum CpTransition {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
 
     /// Verifies: #29 (REQ-F-CP-001)
     /// Per IEEE 802.1X-2020, Clause 10.
@@ -1402,5 +1403,124 @@ mod tests {
             CipherSuite::GcmAes256
         );
         assert_eq!(cp.secure_channel().unwrap().key_len(), 32);
+    }
+
+    // --- #51 (REQ-NF-PERF-004): State Machine Transition Latency ---
+
+    /// Verifies: #51 (REQ-NF-PERF-004)
+    /// CP state machine transitions complete within 10ms.
+    /// Measures all valid transitions in the CP state machine.
+    #[test]
+    fn test_perf_cp_transition_latency() {
+        let mut latencies = Vec::new();
+
+        // Transition: Disabled → Unsecured
+        let mut cp = CpStateMachine::new(1);
+        let start = std::time::Instant::now();
+        cp.handle_event(CpEvent::EnableUnsecured).unwrap();
+        latencies.push(start.elapsed());
+
+        // Transition: Unsecured → Secured
+        let sak = Sak::from_bytes(&[0x01; 16], 0).unwrap();
+        let sci = Sci::new([0x02; 6], 1);
+        let start = std::time::Instant::now();
+        cp.handle_event(CpEvent::SakAvailable {
+            sak,
+            sci,
+            cipher_suite: CipherSuite::GcmAes128,
+        })
+        .unwrap();
+        latencies.push(start.elapsed());
+
+        // Transition: Secured → Disabled
+        let start = std::time::Instant::now();
+        cp.handle_event(CpEvent::Disable).unwrap();
+        latencies.push(start.elapsed());
+
+        for (i, latency) in latencies.iter().enumerate() {
+            assert!(
+                *latency < Duration::from_millis(10),
+                "CP transition {i} took {:?}, expected < 10ms",
+                latency
+            );
+        }
+    }
+
+    /// Verifies: #51 (REQ-NF-PERF-004)
+    /// CP state machine 95th percentile transition latency over 1000 full cycles
+    /// is ≤ 10ms.
+    #[test]
+    fn test_perf_cp_transition_95th_percentile() {
+        let mut latencies = Vec::with_capacity(3000);
+
+        for _ in 0..1000 {
+            let mut cp = CpStateMachine::new(1);
+
+            // Disabled → Unsecured
+            let start = std::time::Instant::now();
+            cp.handle_event(CpEvent::EnableUnsecured).unwrap();
+            latencies.push(start.elapsed());
+
+            // Unsecured → Secured
+            let sak = Sak::from_bytes(&[0x01; 16], 0).unwrap();
+            let sci = Sci::new([0x02; 6], 1);
+            let start = std::time::Instant::now();
+            cp.handle_event(CpEvent::SakAvailable {
+                sak,
+                sci,
+                cipher_suite: CipherSuite::GcmAes128,
+            })
+            .unwrap();
+            latencies.push(start.elapsed());
+
+            // Secured → Disabled
+            let start = std::time::Instant::now();
+            cp.handle_event(CpEvent::Disable).unwrap();
+            latencies.push(start.elapsed());
+        }
+
+        latencies.sort();
+        let p95_idx = (latencies.len() as f64 * 0.95) as usize;
+        let p95 = latencies[p95_idx.min(latencies.len() - 1)];
+
+        assert!(
+            p95 < Duration::from_millis(10),
+            "95th percentile CP transition latency {:?}, expected < 10ms",
+            p95
+        );
+    }
+
+    /// Verifies: #51 (REQ-NF-PERF-004)
+    /// CP recompute_state (Cl.12.3 interface variable changes) completes
+    /// within 10ms. Measures set_secure, set_authenticated, set_failed.
+    #[test]
+    fn test_perf_cp_recompute_latency() {
+        let mut latencies = Vec::new();
+
+        for _ in 0..1000 {
+            let mut cp = CpStateMachine::new(1);
+
+            let start = std::time::Instant::now();
+            cp.set_authenticated(true);
+            latencies.push(start.elapsed());
+
+            let start = std::time::Instant::now();
+            cp.set_secure(true);
+            latencies.push(start.elapsed());
+
+            let start = std::time::Instant::now();
+            cp.set_failed(true);
+            latencies.push(start.elapsed());
+        }
+
+        latencies.sort();
+        let p95_idx = (latencies.len() as f64 * 0.95) as usize;
+        let p95 = latencies[p95_idx.min(latencies.len() - 1)];
+
+        assert!(
+            p95 < Duration::from_millis(10),
+            "95th percentile CP recompute latency {:?}, expected < 10ms",
+            p95
+        );
     }
 }

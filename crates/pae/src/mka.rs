@@ -3119,4 +3119,93 @@ mod tests {
         assert_eq!(p.state(), MkaState::Pending);
         assert!(events.contains(&PaeEvent::MkaSessionTerminated));
     }
+
+    // --- #51 (REQ-NF-PERF-004): MKA State Machine Transition Latency ---
+
+    /// Verifies: #51 (REQ-NF-PERF-004)
+    /// MKA state machine transitions complete within 10ms.
+    /// Measures: step (MKPDU transmit), update_peer, expire_peers, teardown.
+    #[test]
+    fn test_perf_mka_transition_latency() {
+        let mut latencies = Vec::new();
+
+        let mut p = make_participant();
+
+        // step() → MKPDU transmit
+        let start = std::time::Instant::now();
+        p.step().unwrap();
+        latencies.push(start.elapsed());
+
+        // update_peer_from_mkpdu
+        let mi = [0xBB; 12];
+        let start = std::time::Instant::now();
+        p.update_peer_from_mkpdu(mi, 5, 0x20).unwrap();
+        latencies.push(start.elapsed());
+
+        // promote_peer + update → Established
+        p.peers.promote_peer(&mi).unwrap();
+        let start = std::time::Instant::now();
+        p.update_peer_from_mkpdu(mi, 6, 0x20).unwrap();
+        latencies.push(start.elapsed());
+
+        // expire_peers
+        p.ctx.advance_time(Duration::from_secs(10));
+        let start = std::time::Instant::now();
+        let _ = p.expire_peers();
+        latencies.push(start.elapsed());
+
+        // teardown
+        let start = std::time::Instant::now();
+        let _ = p.teardown();
+        latencies.push(start.elapsed());
+
+        for (i, latency) in latencies.iter().enumerate() {
+            assert!(
+                *latency < Duration::from_millis(10),
+                "MKA transition {i} took {:?}, expected < 10ms",
+                latency
+            );
+        }
+    }
+
+    /// Verifies: #51 (REQ-NF-PERF-004)
+    /// MKA state machine 95th percentile transition latency over 1000 cycles
+    /// is ≤ 10ms. Exercises the full Pending → Established → Pending cycle.
+    #[test]
+    fn test_perf_mka_transition_95th_percentile() {
+        let mut latencies = Vec::with_capacity(3000);
+
+        for _ in 0..1000 {
+            let mut p = make_participant();
+
+            // step() → MKPDU transmit
+            let start = std::time::Instant::now();
+            p.step().unwrap();
+            latencies.push(start.elapsed());
+
+            // update_peer + promote → Established
+            let mi = [0xBB; 12];
+            let start = std::time::Instant::now();
+            p.update_peer_from_mkpdu(mi, 5, 0x20).unwrap();
+            p.peers.promote_peer(&mi).unwrap();
+            p.update_peer_from_mkpdu(mi, 6, 0x20).unwrap();
+            latencies.push(start.elapsed());
+
+            // expire_peers → Pending
+            p.ctx.advance_time(Duration::from_secs(10));
+            let start = std::time::Instant::now();
+            p.expire_peers();
+            latencies.push(start.elapsed());
+        }
+
+        latencies.sort();
+        let p95_idx = (latencies.len() as f64 * 0.95) as usize;
+        let p95 = latencies[p95_idx.min(latencies.len() - 1)];
+
+        assert!(
+            p95 < Duration::from_millis(10),
+            "95th percentile MKA transition latency {:?}, expected < 10ms",
+            p95
+        );
+    }
 }
