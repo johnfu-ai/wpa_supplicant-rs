@@ -6,11 +6,23 @@
 //!
 //! IMPORTANT: This implementation is based on understanding of IEEE 802.1X-2020.
 //! No copyrighted content from the standard is reproduced.
+//!
+//! Implements: #61 (REQ-NF-PORT-002: no_std compatible core types, std-gated crypto)
 
-use cmac::{Cmac, Mac};
-use digest::KeyInit;
-use std::time::Duration;
+use core::time::Duration;
 use zeroize::ZeroizeOnDrop;
+
+#[cfg(not(feature = "std"))]
+use alloc::format;
+#[cfg(not(feature = "std"))]
+use alloc::vec;
+#[cfg(not(feature = "std"))]
+use alloc::vec::Vec;
+
+#[cfg(feature = "std")]
+use cmac::{Cmac, Mac};
+#[cfg(feature = "std")]
+use digest::KeyInit;
 
 /// MKA key agreement entity (KaY) state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -72,13 +84,14 @@ impl Cak {
     }
 
     /// Key bytes as a slice (for KDF operations only).
+    #[allow(dead_code)] // Used by std-gated KDF/crypto code
     pub(crate) fn as_bytes(&self) -> &[u8] {
         &self.key[..self.len]
     }
 }
 
-impl std::fmt::Debug for Cak {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Debug for Cak {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.write_str("Cak([REDACTED])")
     }
 }
@@ -93,8 +106,8 @@ pub struct Ckn {
     value: Vec<u8>,
 }
 
-impl std::hash::Hash for Ckn {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+impl core::hash::Hash for Ckn {
+    fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
         self.value.hash(state);
     }
 }
@@ -137,8 +150,8 @@ impl Ckn {
     }
 }
 
-impl std::fmt::Debug for Ckn {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Debug for Ckn {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.write_str("Ckn([REDACTED])")
     }
 }
@@ -161,6 +174,7 @@ impl Ick {
     ///
     /// # Errors
     /// Returns `PaeError::KeyError` if `key` is not 16 or 32 bytes.
+    #[allow(dead_code)] // Used by std-gated KDF/crypto code
     pub(crate) fn from_bytes(key: &[u8]) -> Result<Self, crate::PaeError> {
         if !Cak::VALID_LENGTHS.contains(&key.len()) {
             return Err(crate::PaeError::KeyError(format!(
@@ -194,8 +208,8 @@ impl Ick {
     }
 }
 
-impl std::fmt::Debug for Ick {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Debug for Ick {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.write_str("Ick([REDACTED])")
     }
 }
@@ -218,6 +232,7 @@ impl Kek {
     ///
     /// # Errors
     /// Returns `PaeError::KeyError` if `key` is not 16 or 32 bytes.
+    #[allow(dead_code)] // Used by std-gated KDF/crypto code
     pub(crate) fn from_bytes(key: &[u8]) -> Result<Self, crate::PaeError> {
         if !Cak::VALID_LENGTHS.contains(&key.len()) {
             return Err(crate::PaeError::KeyError(format!(
@@ -251,8 +266,8 @@ impl Kek {
     }
 }
 
-impl std::fmt::Debug for Kek {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Debug for Kek {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.write_str("Kek([REDACTED])")
     }
 }
@@ -327,8 +342,8 @@ impl Sak {
     }
 }
 
-impl std::fmt::Debug for Sak {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Debug for Sak {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("Sak").field("an", &self.an).finish()
     }
 }
@@ -381,8 +396,8 @@ impl Msk {
     }
 }
 
-impl std::fmt::Debug for Msk {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Debug for Msk {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.write_str("Msk([REDACTED])")
     }
 }
@@ -440,13 +455,19 @@ pub trait Kdf: Send + Sync {
 ///
 /// Uses AES-CMAC (RFC 4493) as the KDF primitive.
 /// KDF(label, context, key) = AES-CMAC(key, label || context)[0..length]
+///
+/// Only available with the `std` feature (requires AES-CMAC crypto crates).
+#[cfg(feature = "std")]
 pub struct AesCmacKdf;
 
 /// KDF label for ICK derivation. Per Cl.9.6.
+#[cfg(feature = "std")]
 const KDF_LABEL_ICK: &[u8] = b"IEEE8021 ICK";
 /// KDF label for KEK derivation. Per Cl.9.6.
+#[cfg(feature = "std")]
 const KDF_LABEL_KEK: &[u8] = b"IEEE8021 KEK";
 
+#[cfg(feature = "std")]
 impl AesCmacKdf {
     /// Derive key material using AES-CMAC KDF per IEEE 802.1X-2020, Clause 6.2.1.
     ///
@@ -526,6 +547,7 @@ impl AesCmacKdf {
     }
 }
 
+#[cfg(feature = "std")]
 impl Kdf for AesCmacKdf {
     fn derive_ick(&self, cak: &Cak, ckn: &Ckn) -> Result<Ick, crate::PaeError> {
         let ick_len = cak.len(); // ICK length matches CAK length
@@ -646,8 +668,12 @@ pub trait Rng: Send + Sync {
 ///
 /// Per IEEE 802.1X-2020, Clause 9.2.1.
 /// Uses `getrandom` crate which prefers hardware RNG when available.
+///
+/// Only available with the `std` feature (requires `getrandom` crate).
+#[cfg(feature = "std")]
 pub struct SystemRng;
 
+#[cfg(feature = "std")]
 impl Rng for SystemRng {
     fn fill_bytes(&self, buf: &mut [u8]) -> Result<(), crate::PaeError> {
         getrandom::getrandom(buf)
@@ -668,6 +694,9 @@ impl Rng for SystemRng {
 /// (ICK, KEK) are selected by matching against the CKN.
 ///
 /// Implements: #27 (REQ-F-MKA-009: CAK Identification)
+///
+/// Only available with the `std` feature (requires KDF for key derivation).
+#[cfg(feature = "std")]
 pub struct CakEntry {
     /// The CAK (root key).
     cak: Cak,
@@ -679,6 +708,7 @@ pub struct CakEntry {
     kek: Kek,
 }
 
+#[cfg(feature = "std")]
 impl CakEntry {
     /// Create a new CakEntry by deriving ICK and KEK from CAK and CKN.
     ///
@@ -713,8 +743,9 @@ impl CakEntry {
     }
 }
 
-impl std::fmt::Debug for CakEntry {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+#[cfg(feature = "std")]
+impl core::fmt::Debug for CakEntry {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("CakEntry")
             .field("ckn", &self.ckn)
             .field("cak", &self.cak)
@@ -729,10 +760,14 @@ impl std::fmt::Debug for CakEntry {
 /// verification and SAK unwrapping.
 ///
 /// Implements: #27 (REQ-F-MKA-009: CAK Identification)
+///
+/// Only available with the `std` feature (requires CakEntry).
+#[cfg(feature = "std")]
 pub struct CakStore {
     entries: Vec<CakEntry>,
 }
 
+#[cfg(feature = "std")]
 impl CakStore {
     /// Create an empty CAK store.
     pub fn new() -> Self {
@@ -772,6 +807,7 @@ impl CakStore {
     }
 }
 
+#[cfg(feature = "std")]
 impl Default for CakStore {
     fn default() -> Self {
         Self::new()
@@ -850,8 +886,11 @@ pub trait MkaContext: Send + Sync {
 ///
 /// Implements: #20 (REQ-F-MKA-002: MKA Transport)
 ///
+/// Only available with the `std` feature (requires AES-CMAC crypto crates).
+///
 /// # Errors
 /// Returns `PaeError::CryptoError` if CMAC computation fails.
+#[cfg(feature = "std")]
 pub fn compute_icv(payload: &[u8], ick: &Ick) -> Result<[u8; 16], crate::PaeError> {
     match ick.len() {
         16 => {
@@ -888,8 +927,11 @@ pub fn compute_icv(payload: &[u8], ick: &Ick) -> Result<[u8; 16], crate::PaeErro
 /// Per IEEE 802.1X-2020, Clause 9.7.
 /// Implements: #20 (REQ-F-MKA-002: MKA Transport)
 ///
+/// Only available with the `std` feature (requires AES-CMAC crypto crates).
+///
 /// # Errors
 /// Returns `PaeError::IcvFailed` if the ICV does not match.
+#[cfg(feature = "std")]
 pub fn verify_icv(
     payload: &[u8],
     expected_icv: &[u8; 16],
@@ -1565,8 +1607,8 @@ pub enum PaeEvent {
     MkaSessionTerminated,
 }
 
-impl std::fmt::Debug for PaeEvent {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Debug for PaeEvent {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             Self::MkaTransmit { mkpdu } => f
                 .debug_struct("MkaTransmit")

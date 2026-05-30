@@ -4,14 +4,24 @@
 //! BTreeMap-based for O(log n) expiry lookup with bounded execution.
 //!
 //! Implements: #25 (REQ-F-MKA-007: MKA Participant Timer Values)
+//! Implements: #61 (REQ-NF-PORT-002: no_std compatible - uses alloc::collections)
 
-use std::collections::{BTreeMap, HashMap};
-use std::time::Duration;
+use core::time::Duration;
+
+#[cfg(not(feature = "std"))]
+use alloc::collections::BTreeMap;
+#[cfg(not(feature = "std"))]
+use alloc::vec;
+#[cfg(not(feature = "std"))]
+use alloc::vec::Vec;
+
+#[cfg(feature = "std")]
+use std::collections::BTreeMap;
 
 /// Protocol timer identifiers.
 ///
 /// Per IEEE 802.1X-2020 and ADR-TMR-003 (#75).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum TimerId {
     /// MKA Hello Time (default 2000ms). Per Cl.9.5.
     MkaHello,
@@ -49,7 +59,7 @@ pub struct TimerWheel {
     /// Scheduled timers: expiry time → list of timer IDs.
     timers: BTreeMap<Duration, Vec<TimerId>>,
     /// Active timer IDs and their expiry times (for cancellation).
-    active: HashMap<TimerId, Duration>,
+    active: BTreeMap<TimerId, Duration>,
 }
 
 impl TimerWheel {
@@ -58,7 +68,7 @@ impl TimerWheel {
         Self {
             now: Duration::ZERO,
             timers: BTreeMap::new(),
-            active: HashMap::new(),
+            active: BTreeMap::new(),
         }
     }
 

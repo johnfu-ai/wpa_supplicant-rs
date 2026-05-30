@@ -8,6 +8,13 @@
 
 use crate::mka::{CipherSuite, Sak, Sci};
 
+#[cfg(not(feature = "std"))]
+use alloc::format;
+#[cfg(not(feature = "std"))]
+use alloc::vec;
+#[cfg(not(feature = "std"))]
+use alloc::vec::Vec;
+
 /// Controlled Port state.
 ///
 /// Per IEEE 802.1X-2020, Clause 10.

@@ -88,7 +88,7 @@ wiring together the library crates via the event loop per ADR-EVT-007 (#79).
 | # | REQ-NF | Title | Crate | Depends On | Status |
 |---|---|---|---|---|---|
 | 60 | REQ-NF-PORT-001 | Linux x86_64 and ARM64 | workspace | — | Done |
-| 61 | REQ-NF-PORT-002 | no_std Capability (Feature-Gated) | `pae` | — | Todo |
+| 61 | REQ-NF-PORT-002 | no_std Capability (Feature-Gated) | `pae` | — | Done |
 
 ### Notes
 

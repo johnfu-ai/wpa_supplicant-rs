@@ -13,6 +13,13 @@
 use crate::mka::{CipherSuite, Ckn, Sci};
 use crate::PaeError;
 
+#[cfg(not(feature = "std"))]
+use alloc::collections::BTreeSet;
+#[cfg(not(feature = "std"))]
+use alloc::format;
+#[cfg(not(feature = "std"))]
+use alloc::vec::Vec;
+
 /// MKPDU protocol version per Cl.11.11.
 pub const MKPDU_VERSION: u8 = 3;
 
@@ -393,7 +400,8 @@ impl ParameterSet {
         // 1 byte reserved (part of 4-byte header)
         buf.push(0);
         buf.extend_from_slice(&body);
-        buf.extend(std::iter::repeat(0).take(padding));
+        // Padding zeros — works in both std and no_std (core::iter::repeat)
+        buf.extend(core::iter::repeat(0).take(padding));
         Ok(buf)
     }
 
@@ -520,7 +528,10 @@ impl Mkpdu {
             ));
         }
         // Check for duplicates of singleton parameter sets
+        #[cfg(feature = "std")]
         let mut seen = std::collections::HashSet::new();
+        #[cfg(not(feature = "std"))]
+        let mut seen = BTreeSet::new();
         let singletons = [
             param_type::BASIC,
             param_type::SAK_USE,
