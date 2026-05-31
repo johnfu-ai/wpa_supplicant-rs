@@ -1,23 +1,29 @@
 //! EAP Peer — EAP authentication methods for the supplicant.
 //!
-//! Implements EAP peer framework per IETF RFC 3748.
+//! Implements the EAP peer framework per IETF RFC 3748, with key
+//! derivation per RFC 5247 ("EAP Key Management Framework") feeding
+//! MKA (IEEE 802.1X-2020 Clause 9) via the `key_derivation` module.
 //!
 //! Implements: #38 (REQ-F-EAP-001: EAP Peer Framework)
 //! Architecture: #74 (ADR-SM-002), #78 (ADR-FF-006)
+//!
+//! IMPORTANT: This implementation is based on understanding of the
+//! cited RFCs and IEEE 802.1X-2020. No copyrighted content from those
+//! documents is reproduced.
 
 #![warn(missing_docs)]
 
-/// EAP peer core types and state machine.
+/// EAP peer core types and state machine per RFC 3748.
 pub mod peer;
 
-/// EAP method key derivation for MKA.
+/// EAP method key derivation for MKA, per RFC 5247.
 pub mod key_derivation;
 
-/// EAP-TLS method.
+/// EAP-TLS method per RFC 5216.
 #[cfg(feature = "eap-tls")]
 pub mod eap_tls;
 
-/// EAP-PEAP method.
+/// EAP-PEAP method per draft-josefsson-pppext-eap-tls-eap-10.
 #[cfg(feature = "eap-peap")]
 pub mod eap_peap;
 
