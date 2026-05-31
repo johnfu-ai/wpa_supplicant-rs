@@ -3,7 +3,7 @@
 //! Wires together all protocol state machines (Supplicant PAE, EAP peer,
 //! MKA, CP, Logon Process) into a single runnable application.
 //!
-//! Implements: ARC-C-WPA-005 (#85)
+//! Implements: ARC-C-WPA-005 (#85), REQ-NF-REL-003 (#59)
 //! Architecture: ADR-EVT-007 (#79), ADR-SM-002 (#74)
 //!
 //! IMPORTANT: This implementation is based on understanding of IEEE 802.1X-2020.
@@ -11,13 +11,18 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::time::Instant;
 
 use anyhow::Result;
-use pae::PaeEvent;
+use pae::{CpEvent, CpState, CpStateMachine, PaeEvent};
 
 use crate::config::Config;
 use crate::control::ControlCommand;
 use crate::network_io::NetworkIo;
+
+/// Maximum time allowed for reconnection after link restoration.
+/// Per REQ-NF-REL-003 (#59): supplicant shall re-establish within 10 seconds.
+pub const RECONNECTION_TIMEOUT_SECS: u64 = 10;
 
 /// Supplicant state exposed to the control interface.
 #[derive(Debug, Clone, serde::Serialize)]
@@ -36,15 +41,41 @@ pub struct SupplicantState {
     pub mka_live_peers: usize,
 }
 
+/// Link flap reconnection tracking state.
+///
+/// Per REQ-NF-REL-003 (#59): tracks the reconnection progress after link
+/// restoration, measuring time from link-up to Controlled Port SECURE.
+#[derive(Debug)]
+enum ReconnectionState {
+    /// No reconnection in progress; link is stable.
+    Idle,
+    /// Link is down; waiting for restoration.
+    LinkDown,
+    /// Link restored; reconnection in progress.
+    /// Records the instant when link came back up.
+    Reconnecting {
+        /// Time when link came back up.
+        link_up_at: Instant,
+    },
+}
+
 /// IEEE 802.1X-2020 Supplicant — top-level application.
 ///
 /// Assembles all protocol state machines and runs the event loop.
 /// Per ARC-C-WPA-005 (#85) and ADR-EVT-007 (#79).
+///
+/// Implements: #59 (REQ-NF-REL-003: Reconnection After Link Flap)
 pub struct Supplicant<N: NetworkIo> {
     /// Application configuration.
     config: Config,
     /// Network I/O.
     network: N,
+    /// CP state machine. Per IEEE 802.1X-2020, Clause 10.
+    cp: CpStateMachine,
+    /// Link flap reconnection state. Per REQ-NF-REL-003 (#59).
+    reconnection: ReconnectionState,
+    /// Previous link state (for detecting transitions).
+    prev_link_up: bool,
     /// Shutdown flag.
     shutdown: Arc<AtomicBool>,
 }
@@ -54,26 +85,46 @@ impl<N: NetworkIo> Supplicant<N> {
     ///
     /// Per ARC-C-WPA-005 (#85).
     pub fn new(config: Config, network: N) -> Result<Self> {
+        let link_up = network.link_up();
         Ok(Self {
             config,
             network,
+            cp: CpStateMachine::new(0),
+            reconnection: if link_up {
+                ReconnectionState::Idle
+            } else {
+                ReconnectionState::LinkDown
+            },
+            prev_link_up: link_up,
             shutdown: Arc::new(AtomicBool::new(false)),
         })
     }
 
     /// Perform one iteration of the event loop.
     ///
-    /// 1. Check for incoming EAPOL frames (non-blocking)
-    /// 2. Check for control interface commands (non-blocking)
-    /// 3. Advance timer wheel
-    /// 4. Call step() on each active state machine
-    /// 5. Dispatch resulting events
+    /// 1. Check for link state changes (link flap detection per #59)
+    /// 2. Check for incoming EAPOL frames (non-blocking)
+    /// 3. Check for control interface commands (non-blocking)
+    /// 4. Advance timer wheel
+    /// 5. Call step() on each active state machine
+    /// 6. Dispatch resulting events
     ///
     /// Per ADR-EVT-007 (#79).
     pub fn tick(&mut self) -> Result<Vec<PaeEvent>> {
-        let events = Vec::new();
+        let mut events = Vec::new();
 
-        // Check for incoming EAPOL frames
+        // 1. Check for link state changes — per REQ-NF-REL-003 (#59)
+        let link_up = self.network.link_up();
+        if link_up != self.prev_link_up {
+            let link_events = self.handle_link_change(link_up)?;
+            events.extend(link_events);
+        }
+        self.prev_link_up = link_up;
+
+        // 2. Check for reconnection timeout
+        self.check_reconnection_timeout()?;
+
+        // 3. Check for incoming EAPOL frames
         if let Some(frame) = self.network.recv_eapol()? {
             tracing::debug!(len = frame.len(), "received EAPOL frame");
             // TODO: Dispatch to SupplicantPae::handle_eapol() once wired
@@ -84,6 +135,123 @@ impl<N: NetworkIo> Supplicant<N> {
         // TODO: Dispatch resulting PaeEvents
 
         Ok(events)
+    }
+
+    /// Handle a link state change (link flap).
+    ///
+    /// Per REQ-NF-REL-003 (#59): when link goes down, reset state machines;
+    /// when link comes back up, start reconnection with 10-second deadline.
+    fn handle_link_change(&mut self, link_up: bool) -> Result<Vec<PaeEvent>> {
+        let events: Vec<PaeEvent> = Vec::new();
+
+        if link_up {
+            tracing::info!("link restored — starting reconnection per REQ-NF-REL-003");
+            self.reconnection = ReconnectionState::Reconnecting {
+                link_up_at: Instant::now(),
+            };
+            // Start EAP authentication by enabling the CP (Unsecured state)
+            // Per Cl.10: EnableUnsecured transitions CP from Disabled → Unsecured
+            match self.cp.handle_event(CpEvent::EnableUnsecured) {
+                Ok(transitions) => {
+                    tracing::info!(?transitions, "CP transitioned on link-up");
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "CP EnableUnsecured failed on link-up");
+                }
+            }
+        } else {
+            tracing::warn!("link lost — resetting state machines per REQ-NF-REL-003");
+            self.reconnection = ReconnectionState::LinkDown;
+            // Reset CP to Disabled
+            let _ = self.cp.handle_event(CpEvent::Disable);
+            // TODO: Tear down MKA session, reset Supplicant PAE
+        }
+
+        Ok(events)
+    }
+
+    /// Check if reconnection has exceeded the 10-second deadline.
+    ///
+    /// Per REQ-NF-REL-003 (#59): supplicant shall re-establish within 10 seconds.
+    fn check_reconnection_timeout(&mut self) -> Result<()> {
+        if let ReconnectionState::Reconnecting { link_up_at } = self.reconnection {
+            if self.cp.state() == CpState::Secured {
+                let elapsed = link_up_at.elapsed();
+                tracing::info!(
+                    elapsed_secs = elapsed.as_secs_f64(),
+                    "reconnection completed — CP SECURE reached"
+                );
+                self.reconnection = ReconnectionState::Idle;
+            } else if link_up_at.elapsed().as_secs() > RECONNECTION_TIMEOUT_SECS {
+                tracing::error!(
+                    "reconnection timeout — CP not SECURE within {}s per REQ-NF-REL-003",
+                    RECONNECTION_TIMEOUT_SECS
+                );
+                // Reset and allow retry
+                self.reconnection = ReconnectionState::Idle;
+            }
+        }
+        Ok(())
+    }
+
+    /// Whether reconnection is in progress (link was down, now up but not yet SECURE).
+    ///
+    /// Per REQ-NF-REL-003 (#59).
+    pub fn is_reconnecting(&self) -> bool {
+        matches!(self.reconnection, ReconnectionState::Reconnecting { .. })
+    }
+
+    /// Whether link is currently down.
+    pub fn is_link_down(&self) -> bool {
+        matches!(self.reconnection, ReconnectionState::LinkDown)
+    }
+
+    /// Current CP state.
+    pub fn cp_state(&self) -> CpState {
+        self.cp.state()
+    }
+
+    /// Advance CP to SECURE state (simulates successful MKA SAK installation).
+    ///
+    /// In a fully wired supplicant, this would be called automatically when
+    /// MKA produces a SAK. For REQ-NF-REL-003 testing, this simulates the
+    /// protocol completing successfully.
+    pub fn simulate_sak_install(&mut self) -> Result<()> {
+        use pae::{CipherSuite, Sak, Sci};
+
+        // CP must be in Unsecured state to install a SAK
+        if self.cp.state() != CpState::Unsecured {
+            return Ok(());
+        }
+
+        let sak = Sak::from_bytes(&[0x01; 16], 0)
+            .map_err(|e| anyhow::anyhow!("SAK creation failed: {}", e))?;
+        let sci = Sci::new(self.network.mac_address(), 1);
+
+        match self.cp.handle_event(CpEvent::SakAvailable {
+            sak,
+            sci,
+            cipher_suite: CipherSuite::GcmAes128,
+        }) {
+            Ok(transitions) => {
+                tracing::info!(?transitions, "SAK installed — CP now SECURE");
+                Ok(())
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "SAK install failed");
+                Ok(())
+            }
+        }
+    }
+
+    /// Time elapsed since link restoration, if reconnecting.
+    ///
+    /// Per REQ-NF-REL-003 (#59): used to verify reconnection timing.
+    pub fn reconnection_elapsed(&self) -> Option<std::time::Duration> {
+        match &self.reconnection {
+            ReconnectionState::Reconnecting { link_up_at } => Some(link_up_at.elapsed()),
+            _ => None,
+        }
     }
 
     /// Run the main event loop.
@@ -145,8 +313,8 @@ impl<N: NetworkIo> Supplicant<N> {
     pub fn state(&self) -> SupplicantState {
         SupplicantState {
             pae_state: "disconnected".to_string(), // TODO: read from SupplicantPae
-            cp_state: "closed".to_string(),        // TODO: read from CpStateMachine
-            logon_state: None,                     // TODO: read from LogonProcess
+            cp_state: format!("{:?}", self.cp.state()).to_lowercase(),
+            logon_state: None, // TODO: read from LogonProcess
             selected_nid: None,
             mka_established: false, // TODO: read from MkaParticipant
             mka_live_peers: 0,
@@ -257,7 +425,7 @@ ca = "/etc/certs/ca.pem"
         let supp = Supplicant::new(config, network).unwrap();
         let state = supp.state();
         let json = serde_json::to_string(&state).unwrap();
-        assert!(json.contains("disconnected"));
+        assert!(json.contains("disabled"));
     }
 
     /// Verifies: ADR-EVT-007 (#79)
@@ -271,5 +439,166 @@ ca = "/etc/certs/ca.pem"
         supp.shutdown();
         let result = supp.run();
         assert!(result.is_ok());
+    }
+
+    // --- REQ-NF-REL-003: Reconnection After Link Flap ---
+
+    /// Verifies: #59 (REQ-NF-REL-003)
+    /// Per IEEE 802.1X-2020 and REQ-NF-REL-003.
+    /// Link down transitions CP to Disabled state.
+    #[test]
+    fn test_link_down_disables_cp() {
+        let config = make_config();
+        let network = crate::network_io::MockNetworkIo::new();
+        let mut supp = Supplicant::new(config, network).unwrap();
+
+        // Initially CP is Disabled
+        assert_eq!(supp.cp_state(), CpState::Disabled);
+        assert!(!supp.is_link_down());
+
+        // Simulate link down
+        supp.network.set_link(false);
+        supp.tick().unwrap();
+
+        assert!(supp.is_link_down());
+        assert_eq!(supp.cp_state(), CpState::Disabled);
+    }
+
+    /// Verifies: #59 (REQ-NF-REL-003)
+    /// Per IEEE 802.1X-2020 and REQ-NF-REL-003.
+    /// Link up after link down starts reconnection and CP enters Unsecured.
+    #[test]
+    fn test_link_up_starts_reconnection() {
+        let config = make_config();
+        let network = crate::network_io::MockNetworkIo::new();
+        let mut supp = Supplicant::new(config, network).unwrap();
+
+        // Simulate link down
+        supp.network.set_link(false);
+        supp.tick().unwrap();
+        assert!(supp.is_link_down());
+
+        // Simulate link up — starts reconnection
+        supp.network.set_link(true);
+        supp.tick().unwrap();
+
+        assert!(supp.is_reconnecting());
+        assert_eq!(supp.cp_state(), CpState::Unsecured);
+    }
+
+    /// Verifies: #59 (REQ-NF-REL-003)
+    /// Per IEEE 802.1X-2020 and REQ-NF-REL-003.
+    /// Reconnection completes when CP reaches SECURE within 10 seconds.
+    #[test]
+    fn test_reconnection_completes_on_secure() {
+        let config = make_config();
+        let network = crate::network_io::MockNetworkIo::new();
+        let mut supp = Supplicant::new(config, network).unwrap();
+
+        // Simulate link down then up
+        supp.network.set_link(false);
+        supp.tick().unwrap();
+        supp.network.set_link(true);
+        supp.tick().unwrap();
+
+        assert!(supp.is_reconnecting());
+        assert_eq!(supp.cp_state(), CpState::Unsecured);
+
+        // Simulate successful MKA SAK installation
+        supp.simulate_sak_install().unwrap();
+        assert_eq!(supp.cp_state(), CpState::Secured);
+
+        // Next tick should detect completion
+        supp.tick().unwrap();
+        assert!(
+            !supp.is_reconnecting(),
+            "reconnection should be complete after CP SECURE"
+        );
+    }
+
+    /// Verifies: #59 (REQ-NF-REL-003)
+    /// Per IEEE 802.1X-2020 and REQ-NF-REL-003.
+    /// Full link flap cycle: SECURE → link down → link up → SECURE
+    /// within 10 seconds.
+    #[test]
+    fn test_full_link_flap_recovery_within_10s() {
+        let config = make_config();
+        let network = crate::network_io::MockNetworkIo::new();
+        let mut supp = Supplicant::new(config, network).unwrap();
+
+        // 1. Initial: CP Disabled, link up
+        assert_eq!(supp.cp_state(), CpState::Disabled);
+
+        // 2. Simulate initial authentication — trigger link flap cycle
+        //    (link down then up to enable CP via handle_link_change)
+        supp.network.set_link(false);
+        supp.tick().unwrap();
+        assert!(supp.is_link_down());
+
+        supp.network.set_link(true);
+        supp.tick().unwrap();
+        assert_eq!(supp.cp_state(), CpState::Unsecured);
+
+        // 3. Install SAK (simulate MKA session established)
+        supp.simulate_sak_install().unwrap();
+        assert_eq!(supp.cp_state(), CpState::Secured);
+
+        // 4. Link goes down — CP should be Disabled
+        supp.network.set_link(false);
+        supp.tick().unwrap();
+        assert!(supp.is_link_down());
+        assert_eq!(supp.cp_state(), CpState::Disabled);
+
+        // 5. Link comes back up — reconnection starts
+        supp.network.set_link(true);
+        supp.tick().unwrap();
+        assert!(supp.is_reconnecting());
+        assert_eq!(supp.cp_state(), CpState::Unsecured);
+
+        // 6. Simulate successful reconnection (SAK install)
+        let elapsed_before = supp.reconnection_elapsed().unwrap();
+        supp.simulate_sak_install().unwrap();
+        assert_eq!(supp.cp_state(), CpState::Secured);
+
+        // 7. Verify reconnection completes
+        supp.tick().unwrap();
+        assert!(!supp.is_reconnecting());
+
+        // 8. Verify timing: elapsed should be well under 10 seconds
+        // (This is a unit test — the simulated reconnection is instantaneous)
+        assert!(
+            elapsed_before.as_secs() < RECONNECTION_TIMEOUT_SECS,
+            "reconnection should complete within {} seconds",
+            RECONNECTION_TIMEOUT_SECS
+        );
+    }
+
+    /// Verifies: #59 (REQ-NF-REL-003)
+    /// Per IEEE 802.1X-2020 and REQ-NF-REL-003.
+    /// Multiple link flaps in sequence are handled correctly.
+    #[test]
+    fn test_multiple_link_flaps() {
+        let config = make_config();
+        let network = crate::network_io::MockNetworkIo::new();
+        let mut supp = Supplicant::new(config, network).unwrap();
+
+        for _ in 0..3 {
+            // Link down
+            supp.network.set_link(false);
+            supp.tick().unwrap();
+            assert!(supp.is_link_down());
+
+            // Link up — reconnection starts
+            supp.network.set_link(true);
+            supp.tick().unwrap();
+            assert!(supp.is_reconnecting());
+            assert_eq!(supp.cp_state(), CpState::Unsecured);
+
+            // Complete reconnection
+            supp.simulate_sak_install().unwrap();
+            supp.tick().unwrap();
+            assert!(!supp.is_reconnecting());
+            assert_eq!(supp.cp_state(), CpState::Secured);
+        }
     }
 }

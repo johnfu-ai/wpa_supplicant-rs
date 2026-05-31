@@ -26,10 +26,13 @@ pub trait NetworkIo: Send + Sync {
 }
 
 /// Mock network I/O for testing.
+///
+/// Per ADR-SM-002 (#74).
+/// Supports dynamic link state changes for link flap testing per REQ-NF-REL-003 (#59).
 #[cfg(test)]
 pub struct MockNetworkIo {
     mac: [u8; 6],
-    link: bool,
+    link: std::sync::Mutex<bool>,
     sent: std::sync::Mutex<Vec<(Vec<u8>, Vec<u8>)>>,
     inbox: std::sync::Mutex<Vec<Vec<u8>>>,
 }
@@ -40,7 +43,7 @@ impl MockNetworkIo {
     pub fn new() -> Self {
         Self {
             mac: [0x02, 0x00, 0x00, 0x00, 0x00, 0x01],
-            link: true,
+            link: std::sync::Mutex::new(true),
             sent: std::sync::Mutex::new(Vec::new()),
             inbox: std::sync::Mutex::new(Vec::new()),
         }
@@ -54,6 +57,11 @@ impl MockNetworkIo {
     /// Queue a frame for reception.
     pub fn enqueue(&self, frame: Vec<u8>) {
         self.inbox.lock().unwrap().push(frame);
+    }
+
+    /// Set link state. Per REQ-NF-REL-003 (#59): simulates link flap.
+    pub fn set_link(&self, up: bool) {
+        *self.link.lock().unwrap() = up;
     }
 }
 
@@ -76,7 +84,7 @@ impl NetworkIo for MockNetworkIo {
     }
 
     fn link_up(&self) -> bool {
-        self.link
+        *self.link.lock().unwrap()
     }
 }
 

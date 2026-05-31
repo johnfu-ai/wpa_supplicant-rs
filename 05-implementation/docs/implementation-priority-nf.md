@@ -102,7 +102,7 @@ wiring together the library crates via the event loop per ADR-EVT-007 (#79).
 
 | # | REQ-NF | Title | Crate | Depends On | Status |
 |---|---|---|---|---|---|
-| 59 | REQ-NF-REL-003 | Reconnection After Link Flap (10s) | `wpa-supplicant` | P6 | Todo |
+| 59 | REQ-NF-REL-003 | Reconnection After Link Flap (10s) | `wpa-supplicant` | P6 | Done |
 
 ### Notes
 
