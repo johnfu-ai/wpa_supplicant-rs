@@ -255,7 +255,7 @@ mod tests {
     }
 
     /// Verifies: #48 (REQ-NF-PERF-001)
-    /// MKA Hello timer fires at exactly 2000ms.
+    /// MKA Hello Time fires at exactly 2000ms.
     /// Timer fires no earlier than MKA_HELLO_TIME and no later than
     /// MKA_HELLO_TIME + 1 tick granularity.
     #[test]
@@ -267,19 +267,19 @@ mod tests {
         let expired_before = tw.advance_to(MKA_HELLO_TIME - Duration::from_millis(1));
         assert!(
             !expired_before.contains(&TimerId::MkaHello),
-            "Hello timer must not fire before 2000ms"
+            "MKA Hello Time must not fire before 2000ms"
         );
 
         // Must fire AT exactly 2000ms
         let expired_at = tw.advance_to(MKA_HELLO_TIME);
         assert!(
             expired_at.contains(&TimerId::MkaHello),
-            "Hello timer must fire at exactly 2000ms"
+            "MKA Hello Time must fire at exactly 2000ms"
         );
     }
 
     /// Verifies: #48 (REQ-NF-PERF-001)
-    /// MKA Bounded Hello timer fires at exactly 500ms.
+    /// MKA Bounded Hello Time fires at exactly 500ms.
     #[test]
     fn test_perf_bounded_hello_accuracy() {
         let mut tw = TimerWheel::new();
@@ -301,7 +301,7 @@ mod tests {
     }
 
     /// Verifies: #48 (REQ-NF-PERF-001)
-    /// Periodic Hello timer rescheduling fires at correct intervals
+    /// Periodic MKA Hello Time rescheduling fires at correct intervals
     /// over multiple cycles. Simulates 10 Hello intervals (20 seconds).
     #[test]
     fn test_perf_hello_periodic_accuracy() {

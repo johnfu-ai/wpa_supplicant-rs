@@ -6,7 +6,7 @@
 //! This crate provides the core types shared across the workspace:
 //! - MKA (MACsec Key Agreement) state machine types
 //! - CP (Controlled Port) state machine types
-//! - PAE port state definitions
+//! - Controlled Port authorization state (Clause 6.4)
 //! - Protocol timer wheel
 //!
 //! Implements: #19 (REQ-F-MKA-001), #20 (REQ-F-MKA-002), #23 (REQ-F-MKA-005), #25 (REQ-F-MKA-007), #27 (REQ-F-MKA-009), #28 (REQ-F-MKA-010), #29 (REQ-F-CP-001), #30 (REQ-F-CP-002), #31 (REQ-F-CP-003), #32 (REQ-F-CP-004), #47 (REQ-F-EAPOL-004)
@@ -35,7 +35,7 @@ pub mod mkpdu;
 /// Controlled Port state machine types per IEEE 802.1X-2020, Clause 10.
 pub mod cp;
 
-/// PAE port state definitions.
+/// Controlled Port authorization state per IEEE 802.1X-2020, Clause 6.4.
 pub mod port;
 
 /// Protocol timer wheel per ADR-TMR-003 (#75).
@@ -115,7 +115,7 @@ pub use mkpdu::{
     BasicParameterSet, DistribSakParameterSet, Mkpdu, ParameterSet, PeerEntry, SakUseParameterSet,
     ICV_LEN, MKPDU_VERSION,
 };
-pub use port::PortState;
+pub use port::ControlledPortState;
 pub use timer::{
     TimerId, TimerWheel, MKA_BOUNDED_HELLO_TIME, MKA_HELLO_TIME, MKA_LIFE_TIME, SAK_RETIRE_TIME,
 };

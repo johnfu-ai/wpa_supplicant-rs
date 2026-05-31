@@ -1,9 +1,11 @@
-//! EAP-PEAP method per RFC 7170.
+//! EAP-PEAP method per draft-josefsson-pppext-eap-tls-eap-10
+//! (Protected EAP, never standardized as an RFC).
 //!
 //! Implements: #40 (REQ-F-EAP-003: PEAP)
 //!
-//! IMPORTANT: This implementation is based on understanding of RFC 7170.
-//! No copyrighted content from the RFC is reproduced.
+//! IMPORTANT: This implementation is based on understanding of the PEAP
+//! draft and IEEE 802.1X-2020. No copyrighted content from either is
+//! reproduced.
 
 use std::sync::Arc;
 

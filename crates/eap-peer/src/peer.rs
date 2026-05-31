@@ -385,9 +385,9 @@ pub trait EapMethod: Send + Sync {
 
     /// Whether this method supports mutual authentication.
     ///
-    /// Per IEEE 802.1X-2020, Clause 8.11: all EAP methods used by the
-    /// supplicant shall support mutual authentication. Methods returning
-    /// `false` must not be used with MKA.
+    /// Methods returning `false` must not be used with MKA, since IEEE
+    /// 802.1X-2020 Clause 8.11 restricts MKA-capable supplicants to EAP
+    /// methods that mutually authenticate the peer and the authenticator.
     fn supports_mutual_authentication(&self) -> bool;
 }
 
@@ -421,8 +421,8 @@ pub trait EapContext: Send + Sync {
 /// Implements: #38 (REQ-F-EAP-001)
 /// Validate that all methods in the list support mutual authentication.
 ///
-/// Per IEEE 802.1X-2020, Clause 8.11: all EAP methods used by the
-/// supplicant shall support mutual authentication.
+/// Enforces the Clause 8.11 (IEEE 802.1X-2020) restriction on EAP
+/// methods usable with MKA-capable supplicants.
 ///
 /// Returns `Ok(())` if all methods support mutual auth, or
 /// `Err(EapError)` listing the non-mutual-auth methods.
