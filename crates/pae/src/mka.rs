@@ -3256,7 +3256,7 @@ mod tests {
     // --- #86 (QA-SC-PERF-001): MKA Hello Timing Under Load ---
 
     /// Verifies: #86 (QA-SC-PERF-001)
-    /// ATAM scenario: MKA Hello timer fires while processing 10 concurrent peer
+    /// ATAM scenario: MKA Hello Time fires while processing 10 concurrent peer
     /// MKPDUs. Validates that MKPDU is still transmitted within Hello Time.
     /// Uses virtual clock: timer fires at exactly 2000ms, step() produces
     /// MkaTransmit event regardless of peer processing load.
@@ -3284,7 +3284,7 @@ mod tests {
         assert_eq!(list.live_count(), 2);
         assert_eq!(list.potential_count(), 2);
 
-        // Schedule hello timer
+        // Schedule MKA Hello Time
         tw.schedule(TimerId::MkaHello, MKA_HELLO_TIME);
 
         // Simulate 10 rapid MKPDU arrivals (update same peers with new MNs)
@@ -3309,12 +3309,12 @@ mod tests {
         let expired = tw.advance_to(MKA_HELLO_TIME);
         assert!(
             expired.contains(&TimerId::MkaHello),
-            "Hello timer must fire at exactly 2000ms even under 10-peer load"
+            "MKA Hello Time must fire at exactly 2000ms even under 10-peer load"
         );
     }
 
     /// Verifies: #86 (QA-SC-PERF-001)
-    /// Wall-clock latency of hello timer + MKPDU generation under load.
+    /// Wall-clock latency of MKA Hello Time + MKPDU generation under load.
     /// With timer wheel processing 4 concurrent timers + peer list expiry,
     /// the combined step() latency must remain bounded (< 100ms).
     #[test]
@@ -3347,7 +3347,7 @@ mod tests {
             // Advance past Hello Time
             let expired = tw.advance_to(base + MKA_HELLO_TIME);
 
-            // Count hello timer fires (MKPDU transmits)
+            // Count MKA Hello Time fires (MKPDU transmits)
             if expired.contains(&TimerId::MkaHello) {
                 total_transmits += 1;
             }

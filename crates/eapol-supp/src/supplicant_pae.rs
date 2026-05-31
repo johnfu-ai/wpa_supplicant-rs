@@ -87,7 +87,7 @@ pub trait SupplicantPaeContext: Send + Sync {
     fn send_eapol(&self, frame: &EapolFrame) -> Result<(), EapolError>;
 
     /// Get the current port state.
-    fn get_port_state(&self) -> pae::PortState;
+    fn get_port_state(&self) -> pae::ControlledPortState;
 
     /// Get the current time.
     fn now(&self) -> Duration;
@@ -400,7 +400,9 @@ impl<C: SupplicantPaeContext> SupplicantPae<C> {
 
         // Check port state
         let port_state = self.ctx.get_port_state();
-        if port_state != pae::PortState::Authorized && port_state != pae::PortState::Unauthorized {
+        if port_state != pae::ControlledPortState::Authorized
+            && port_state != pae::ControlledPortState::Unauthorized
+        {
             if self.state != PaeState::Disconnected {
                 self.state = PaeState::Disconnected;
                 self.cancel_timer();
@@ -549,7 +551,7 @@ mod tests {
     /// Mock context for testing SupplicantPae.
     struct MockContext {
         sent_frames: RwLock<Vec<EapolFrame>>,
-        port_state: pae::PortState,
+        port_state: pae::ControlledPortState,
         now: Mutex<Duration>,
         max_retries: u32,
         held_while: Duration,
@@ -562,7 +564,7 @@ mod tests {
         fn new() -> Self {
             Self {
                 sent_frames: RwLock::new(vec![]),
-                port_state: pae::PortState::Unauthorized,
+                port_state: pae::ControlledPortState::Unauthorized,
                 now: Mutex::new(Duration::from_secs(0)),
                 max_retries: 3,
                 held_while: Duration::from_secs(60),
@@ -584,7 +586,7 @@ mod tests {
             Ok(())
         }
 
-        fn get_port_state(&self) -> pae::PortState {
+        fn get_port_state(&self) -> pae::ControlledPortState {
             self.port_state
         }
 
@@ -629,7 +631,7 @@ mod tests {
             (**self).send_eapol(frame)
         }
 
-        fn get_port_state(&self) -> pae::PortState {
+        fn get_port_state(&self) -> pae::ControlledPortState {
             (**self).get_port_state()
         }
 
