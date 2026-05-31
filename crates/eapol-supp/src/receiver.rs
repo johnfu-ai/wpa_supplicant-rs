@@ -261,6 +261,7 @@ mod tests {
     }
 
     /// Helper: create receiver with mock handlers.
+    #[allow(clippy::type_complexity)]
     fn create_receiver(
         frames: Vec<Vec<u8>>,
     ) -> (
@@ -350,7 +351,7 @@ mod tests {
     #[test]
     fn test_dispatch_logoff() {
         let frame = EapolFrame::logoff();
-        let (rx, eap, mka, ann) = create_receiver(vec![frame.encode().unwrap()]);
+        let (rx, eap, _mka, _ann) = create_receiver(vec![frame.encode().unwrap()]);
         let result = rx.receive().unwrap();
         assert_eq!(result, DispatchResult::Logoff);
         assert!(eap.received().is_empty());
@@ -365,7 +366,7 @@ mod tests {
             packet_type: EapolPacketType::EapolKey,
             body: vec![0x00; 16],
         };
-        let (rx, eap, mka, ann) = create_receiver(vec![frame.encode().unwrap()]);
+        let (rx, eap, _mka, _ann) = create_receiver(vec![frame.encode().unwrap()]);
         let result = rx.receive().unwrap();
         assert_eq!(result, DispatchResult::Key);
         assert!(eap.received().is_empty());

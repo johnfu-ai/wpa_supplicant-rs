@@ -38,6 +38,13 @@ pub struct MockNetworkIo {
 }
 
 #[cfg(test)]
+impl Default for MockNetworkIo {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[cfg(test)]
 impl MockNetworkIo {
     /// Create a mock with default MAC and link up.
     pub fn new() -> Self {

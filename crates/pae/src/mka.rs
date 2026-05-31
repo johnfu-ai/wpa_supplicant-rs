@@ -2192,7 +2192,9 @@ mod tests {
     use std::sync::Mutex;
 
     struct MockMkaContext {
+        #[allow(dead_code)]
         ick: Ick,
+        #[allow(dead_code)]
         kek: Kek,
         now_time: Mutex<Duration>,
         sent_frames: Mutex<Vec<Vec<u8>>>,
@@ -3085,7 +3087,7 @@ mod tests {
             let expired_before =
                 list.expire_peers(Duration::from_millis(base_ms + 5999), MKA_LIFE_TIME);
             assert!(
-                !expired_before.iter().any(|e| *e == mi),
+                !expired_before.contains(&mi),
                 "cycle {cycle}: peer must not expire before 6s"
             );
 
@@ -3093,7 +3095,7 @@ mod tests {
             let expired_at =
                 list.expire_peers(Duration::from_millis(base_ms + 6000), MKA_LIFE_TIME);
             assert!(
-                expired_at.iter().any(|e| *e == mi),
+                expired_at.contains(&mi),
                 "cycle {cycle}: peer must expire at 6s"
             );
         }
@@ -3105,7 +3107,6 @@ mod tests {
     /// should complete in sub-millisecond wall-clock time.
     #[test]
     fn test_perf_expire_bounded_execution() {
-        let mut list = MkaPeerList::new();
         let start = std::time::Instant::now();
 
         let mut total_expired = 0;
@@ -3118,7 +3119,7 @@ mod tests {
             let mi3 = [0x03u8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, cycle as u8];
             let mi4 = [0x04u8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, cycle as u8];
 
-            list = MkaPeerList::new(); // Reset each cycle to avoid capacity errors
+            let mut list = MkaPeerList::new(); // Fresh list each cycle to avoid capacity errors
             let now = Duration::from_millis(base_ms);
             list.update_peer(mi1, 1, now).unwrap();
             list.update_peer(mi2, 1, now).unwrap();
