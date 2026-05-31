@@ -14,3 +14,6 @@ Thumbs.db
 
 # Environment
 .env
+
+# Local Claude Code configuration (per-developer)
+.claude/
