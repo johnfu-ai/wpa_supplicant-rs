@@ -1181,7 +1181,7 @@ mod tests {
     /// state transition and any immediate response generation.
     #[test]
     fn test_perf_eapol_response_latency_single() {
-        let (mut pae, ctx) = create_pae();
+        let (mut pae, _ctx) = create_pae();
         pae.set_authenticate(true);
         pae.step().unwrap(); // → Connecting
 
@@ -1209,7 +1209,7 @@ mod tests {
         let mut latencies = Vec::with_capacity(1000);
 
         for _ in 0..1000 {
-            let (mut pae, ctx) = create_pae();
+            let (mut pae, _ctx) = create_pae();
             pae.set_authenticate(true);
             pae.step().unwrap(); // → Connecting
 
@@ -1287,12 +1287,10 @@ mod tests {
                     pae.state = PaeState::Disconnected;
                     pae.set_authenticate(true);
                 }
-                1 => {
+                1 if pae.state() == PaeState::Connecting => {
                     // Connecting → Authenticating (via handle_eapol)
-                    if pae.state() == PaeState::Connecting {
-                        let eap_frame = EapolFrame::eap_packet(vec![0x01]);
-                        let _ = pae.handle_eapol(&eap_frame);
-                    }
+                    let eap_frame = EapolFrame::eap_packet(vec![0x01]);
+                    let _ = pae.handle_eapol(&eap_frame);
                 }
                 2 => {
                     // Advance timer to trigger timeout check

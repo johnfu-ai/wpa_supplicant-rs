@@ -1216,7 +1216,7 @@ mod tests {
         );
 
         // Key Server distributes SAKuse → enable transmit
-        cp.enable_sa_transmit(2);
+        let _ = cp.enable_sa_transmit(2);
         let sa = cp.current_sa().unwrap();
         assert!(sa.is_transmitting());
     }
