@@ -3108,6 +3108,7 @@ mod tests {
     /// With 4 peers (2 live + 2 potential), repeated expiry over 1000 cycles
     /// should complete in sub-millisecond wall-clock time.
     #[test]
+    #[ignore = "wall-clock performance check; run explicitly with cargo test -- --ignored"]
     fn test_perf_expire_bounded_execution() {
         let start = std::time::Instant::now();
 
@@ -3173,6 +3174,7 @@ mod tests {
     /// MKA state machine transitions complete within 10ms.
     /// Measures: step (MKPDU transmit), update_peer, expire_peers, teardown.
     #[test]
+    #[ignore = "wall-clock performance check; run explicitly with cargo test -- --ignored"]
     fn test_perf_mka_transition_latency() {
         let mut latencies = Vec::new();
 
@@ -3219,6 +3221,7 @@ mod tests {
     /// MKA state machine 95th percentile transition latency over 1000 cycles
     /// is ≤ 10ms. Exercises the full Pending → Established → Pending cycle.
     #[test]
+    #[ignore = "wall-clock performance check; run explicitly with cargo test -- --ignored"]
     fn test_perf_mka_transition_95th_percentile() {
         let mut latencies = Vec::with_capacity(3000);
 
@@ -3321,6 +3324,7 @@ mod tests {
     /// With timer wheel processing 4 concurrent timers + peer list expiry,
     /// the combined step() latency must remain bounded (< 100ms).
     #[test]
+    #[ignore = "wall-clock performance check; run explicitly with cargo test -- --ignored"]
     fn test_perf_hello_latency_under_load_bounded() {
         let mut tw = TimerWheel::new();
         let mut list = MkaPeerList::new();

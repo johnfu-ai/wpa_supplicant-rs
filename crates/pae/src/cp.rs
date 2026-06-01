@@ -1418,6 +1418,7 @@ mod tests {
     /// CP state machine transitions complete within 10ms.
     /// Measures all valid transitions in the CP state machine.
     #[test]
+    #[ignore = "wall-clock performance check; run explicitly with cargo test -- --ignored"]
     fn test_perf_cp_transition_latency() {
         let mut latencies = Vec::new();
 
@@ -1457,6 +1458,7 @@ mod tests {
     /// CP state machine 95th percentile transition latency over 1000 full cycles
     /// is ≤ 10ms.
     #[test]
+    #[ignore = "wall-clock performance check; run explicitly with cargo test -- --ignored"]
     fn test_perf_cp_transition_95th_percentile() {
         let mut latencies = Vec::with_capacity(3000);
 
@@ -1501,6 +1503,7 @@ mod tests {
     /// CP recompute_state (Cl.12.3 interface variable changes) completes
     /// within 10ms. Measures set_secure, set_authenticated, set_failed.
     #[test]
+    #[ignore = "wall-clock performance check; run explicitly with cargo test -- --ignored"]
     fn test_perf_cp_recompute_latency() {
         let mut latencies = Vec::new();
 
