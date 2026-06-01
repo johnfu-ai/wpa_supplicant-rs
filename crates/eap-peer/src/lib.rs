@@ -14,20 +14,30 @@
 #![warn(missing_docs)]
 
 /// EAP peer core types and state machine per RFC 3748.
+///
+/// Implements: #38 (REQ-F-EAP-001)
 pub mod peer;
 
 /// EAP method key derivation for MKA, per RFC 5247.
+///
+/// Implements: #43 (REQ-F-EAP-006)
 pub mod key_derivation;
 
 /// EAP-TLS method per RFC 5216.
+///
+/// Implements: #39 (REQ-F-EAP-002)
 #[cfg(feature = "eap-tls")]
 pub mod eap_tls;
 
 /// EAP-PEAP method per draft-josefsson-pppext-eap-tls-eap-10.
+///
+/// Implements: #40 (REQ-F-EAP-003)
 #[cfg(feature = "eap-peap")]
 pub mod eap_peap;
 
 /// EAP-TEAP method per RFC 7170.
+///
+/// Implements: #41 (REQ-F-EAP-004)
 #[cfg(feature = "eap-teap")]
 pub mod eap_teap;
 

@@ -21,10 +21,13 @@ use crate::control::ControlCommand;
 use crate::network_io::NetworkIo;
 
 /// Maximum time allowed for reconnection after link restoration.
-/// Per REQ-NF-REL-003 (#59): supplicant shall re-establish within 10 seconds.
+///
+/// Per REQ-NF-REL-003 (#59): re-establishment must complete within 10 seconds.
 pub const RECONNECTION_TIMEOUT_SECS: u64 = 10;
 
 /// Supplicant state exposed to the control interface.
+///
+/// Exposes runtime status per ARC-C-WPA-005 (#85) and ADR-EVT-007 (#79).
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct SupplicantState {
     /// Current PAE state.
@@ -172,7 +175,7 @@ impl<N: NetworkIo> Supplicant<N> {
 
     /// Check if reconnection has exceeded the 10-second deadline.
     ///
-    /// Per REQ-NF-REL-003 (#59): supplicant shall re-establish within 10 seconds.
+    /// Per REQ-NF-REL-003 (#59): re-establishment must complete within 10 seconds.
     fn check_reconnection_timeout(&mut self) -> Result<()> {
         if let ReconnectionState::Reconnecting { link_up_at } = self.reconnection {
             if self.cp.state() == CpState::Secured {
@@ -202,11 +205,15 @@ impl<N: NetworkIo> Supplicant<N> {
     }
 
     /// Whether link is currently down.
+    ///
+    /// Per REQ-NF-REL-003 (#59).
     pub fn is_link_down(&self) -> bool {
         matches!(self.reconnection, ReconnectionState::LinkDown)
     }
 
     /// Current CP state.
+    ///
+    /// Per IEEE 802.1X-2020 Clause 10 and REQ-NF-REL-003 (#59).
     pub fn cp_state(&self) -> CpState {
         self.cp.state()
     }
@@ -275,12 +282,16 @@ impl<N: NetworkIo> Supplicant<N> {
     }
 
     /// Request graceful shutdown.
+    ///
+    /// Per ADR-EVT-007 (#79).
     pub fn shutdown(&mut self) {
         tracing::info!("shutdown requested");
         self.shutdown.store(true, Ordering::SeqCst);
     }
 
     /// Whether shutdown has been requested.
+    ///
+    /// Per ADR-EVT-007 (#79).
     pub fn is_shutdown(&self) -> bool {
         self.shutdown.load(Ordering::SeqCst)
     }
@@ -310,6 +321,8 @@ impl<N: NetworkIo> Supplicant<N> {
     }
 
     /// Get current supplicant state for the control interface.
+    ///
+    /// Per ARC-C-WPA-005 (#85).
     pub fn state(&self) -> SupplicantState {
         SupplicantState {
             pae_state: "disconnected".to_string(), // TODO: read from SupplicantPae
@@ -322,6 +335,8 @@ impl<N: NetworkIo> Supplicant<N> {
     }
 
     /// Handle a control command from the control interface.
+    ///
+    /// Per ADR-EVT-007 (#79).
     pub fn handle_command(&mut self, cmd: ControlCommand) -> Result<()> {
         match cmd {
             ControlCommand::Reauthenticate => {
