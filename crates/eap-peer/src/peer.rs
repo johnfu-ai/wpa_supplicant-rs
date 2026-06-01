@@ -387,7 +387,7 @@ pub trait EapMethod: Send + Sync {
     ///
     /// Methods returning `false` must not be used with MKA, since IEEE
     /// 802.1X-2020 Clause 8.11 restricts MKA-capable supplicants to EAP
-    /// methods that mutually authenticate the peer and the authenticator.
+    /// methods that mutually authenticate the Supplicant/EAP peer and Authenticator.
     fn supports_mutual_authentication(&self) -> bool;
 }
 

@@ -13,7 +13,9 @@ use super::eap_tls::TlsEngine;
 use super::peer::{EapContext, EapMethod, EapMethodOutput, EapType};
 use super::EapError;
 
-/// EAP-PEAP state per RFC 7170.
+/// EAP-PEAP state per draft-josefsson-pppext-eap-tls-eap-10.
+///
+/// Implements: #40 (REQ-F-EAP-003: PEAP)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EapPeapState {
     /// Initial — waiting for EAP-Request/PEAP-Start.
@@ -26,12 +28,14 @@ pub enum EapPeapState {
     Complete,
 }
 
-/// PEAP flags per RFC 7170.
+/// PEAP flags per draft-josefsson-pppext-eap-tls-eap-10.
 const PEAP_FLAGS_START: u8 = 0x20;
 const PEAP_FLAGS_LENGTH_INCLUDED: u8 = 0x80;
 
-/// EAP-PEAP method — TLS tunnel with inner EAP authentication per RFC 7170.
+/// EAP-PEAP method — TLS tunnel with inner EAP authentication.
 ///
+/// Per draft-josefsson-pppext-eap-tls-eap-10.
+/// Implements: #40 (REQ-F-EAP-003: PEAP)
 /// Feature-gated: `#[cfg(feature = "eap-peap")]`.
 pub struct EapPeap {
     /// PEAP state.
@@ -208,7 +212,7 @@ impl EapMethod for EapPeap {
 impl EapPeap {
     /// Handle Phase 2 — inner EAP authentication within the TLS tunnel.
     ///
-    /// Per RFC 7170: inner EAP packets are tunneled through TLS.
+    /// Per draft-josefsson-pppext-eap-tls-eap-10: inner EAP packets are tunneled through TLS.
     /// The outer PEAP data is decrypted, passed to the inner method,
     /// and the response is encrypted back through the tunnel.
     fn handle_phase2(
@@ -256,7 +260,7 @@ impl EapPeap {
                 })
             }
             EapMethodOutput::Failure { reason } => {
-                // Inner authentication failed — PEAP fails per RFC 7170
+                // Inner authentication failed — PEAP fails per draft-josefsson-pppext-eap-tls-eap-10
                 self.state = EapPeapState::Complete;
                 Err(EapError::AuthFailed(reason))
             }
@@ -436,7 +440,7 @@ mod tests {
     }
 
     /// Verifies: #40 (REQ-F-EAP-003)
-    /// Per RFC 7170: PEAP Start triggers Phase 1.
+    /// Per draft-josefsson-pppext-eap-tls-eap-10: PEAP Start triggers Phase 1.
     #[test]
     fn test_peap_start_phase1() {
         let engine = Arc::new(std::sync::Mutex::new(MockPeapTlsEngine::new()));
@@ -451,7 +455,7 @@ mod tests {
     }
 
     /// Verifies: #40 (REQ-F-EAP-003)
-    /// Per RFC 7170: TLS tunnel establishment completes, moves to Phase 2.
+    /// Per draft-josefsson-pppext-eap-tls-eap-10: TLS tunnel establishment completes, moves to Phase 2.
     #[test]
     fn test_peap_tunnel_established() {
         let engine = Arc::new(std::sync::Mutex::new(MockPeapTlsEngine::new()));
@@ -472,7 +476,7 @@ mod tests {
     }
 
     /// Verifies: #40 (REQ-F-EAP-003)
-    /// Per RFC 7170: Successful PEAP produces MSK >= 64 octets.
+    /// Per draft-josefsson-pppext-eap-tls-eap-10: Successful PEAP produces MSK >= 64 octets.
     #[test]
     fn test_peap_msk_derivation() {
         let engine = Arc::new(std::sync::Mutex::new(MockPeapTlsEngine::new()));
@@ -494,7 +498,7 @@ mod tests {
     }
 
     /// Verifies: #40 (REQ-F-EAP-003)
-    /// Per RFC 7170: PEAP rejects request without Start flag in Initial state.
+    /// Per draft-josefsson-pppext-eap-tls-eap-10: PEAP rejects request without Start flag in Initial state.
     #[test]
     fn test_peap_rejects_no_start() {
         let engine = Arc::new(std::sync::Mutex::new(MockPeapTlsEngine::new()));
@@ -583,7 +587,7 @@ mod tests {
     }
 
     /// Verifies: #40 (REQ-F-EAP-003)
-    /// Per RFC 7170: inner authentication failure causes PEAP to fail.
+    /// Per draft-josefsson-pppext-eap-tls-eap-10: inner authentication failure causes PEAP to fail.
     #[test]
     fn test_peap_inner_auth_failure() {
         let engine = Arc::new(std::sync::Mutex::new(MockPeapTlsEngine::new()));
@@ -652,7 +656,7 @@ mod tests {
     }
 
     /// Verifies: #40 (REQ-F-EAP-003)
-    /// Per RFC 7170: multi-round inner authentication within TLS tunnel.
+    /// Per draft-josefsson-pppext-eap-tls-eap-10: multi-round inner authentication within TLS tunnel.
     #[test]
     fn test_peap_inner_auth_multi_round() {
         let engine = Arc::new(std::sync::Mutex::new(MockPeapTlsEngine::new()));
@@ -677,7 +681,7 @@ mod tests {
     }
 
     /// Verifies: #40 (REQ-F-EAP-003)
-    /// Per RFC 7170: PEAP with no inner method configured returns error.
+    /// Per draft-josefsson-pppext-eap-tls-eap-10: PEAP with no inner method configured returns error.
     #[test]
     fn test_peap_no_inner_method() {
         let engine = Arc::new(std::sync::Mutex::new(MockPeapTlsEngine::new()));
