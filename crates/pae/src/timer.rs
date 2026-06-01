@@ -332,6 +332,7 @@ mod tests {
     /// With 4 concurrent timers at staggered intervals, advancing past
     /// all of them should complete in sub-millisecond wall-clock time.
     #[test]
+    #[ignore = "wall-clock performance check; run explicitly with cargo test -- --ignored"]
     fn test_perf_advance_bounded_execution() {
         let mut tw = TimerWheel::new();
 

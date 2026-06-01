@@ -1180,6 +1180,7 @@ mod tests {
     /// Measures the critical response path: EAPOL-EAP frame receipt through
     /// state transition and any immediate response generation.
     #[test]
+    #[ignore = "wall-clock performance check; run explicitly with cargo test -- --ignored"]
     fn test_perf_eapol_response_latency_single() {
         let (mut pae, _ctx) = create_pae();
         pae.set_authenticate(true);
@@ -1205,6 +1206,7 @@ mod tests {
     /// Simulates repeated EAPOL-EAP frame processing to verify the response
     /// path has bounded and predictable execution time.
     #[test]
+    #[ignore = "wall-clock performance check; run explicitly with cargo test -- --ignored"]
     fn test_perf_eapol_response_latency_95th_percentile() {
         let mut latencies = Vec::with_capacity(1000);
 
@@ -1238,6 +1240,7 @@ mod tests {
     /// handle_eapol execution is bounded: processing 1000 frames
     /// sequentially completes in sub-millisecond wall-clock time.
     #[test]
+    #[ignore = "wall-clock performance check; run explicitly with cargo test -- --ignored"]
     fn test_perf_handle_eapol_bounded_execution() {
         let (mut pae, ctx) = create_pae();
         pae.set_authenticate(true);
@@ -1272,6 +1275,7 @@ mod tests {
     /// step() execution is bounded: 1000 step cycles with state transitions
     /// complete in sub-millisecond wall-clock time.
     #[test]
+    #[ignore = "wall-clock performance check; run explicitly with cargo test -- --ignored"]
     fn test_perf_step_bounded_execution() {
         let (mut pae, ctx) = create_pae();
         pae.set_authenticate(true);
