@@ -12,6 +12,8 @@
 use core::time::Duration;
 use zeroize::ZeroizeOnDrop;
 
+use crate::timer::{MKA_HELLO_TIME, MKA_LIFE_TIME};
+
 #[cfg(not(feature = "std"))]
 use alloc::format;
 #[cfg(not(feature = "std"))]
@@ -1026,8 +1028,8 @@ impl<C: MkaContext> MkaParticipant<C> {
             key_server_priority,
             key_server: KeyServerRole::Actor,
             peers: MkaPeerList::new(),
-            hello_time: Duration::from_millis(2000),
-            life_time: Duration::from_millis(6000),
+            hello_time: MKA_HELLO_TIME,
+            life_time: MKA_LIFE_TIME,
             last_hello: None,
             ctx,
         })
