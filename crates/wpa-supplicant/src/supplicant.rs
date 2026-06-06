@@ -20,6 +20,7 @@ use pae::{CpEvent, CpState, CpStateMachine, PaeEvent};
 
 use crate::config::Config;
 use crate::control::ControlCommand;
+use crate::logging::Logging;
 use crate::network_io::NetworkIo;
 use crate::pae_adapter::SupplicantPaeAdapter;
 
@@ -83,6 +84,11 @@ pub struct Supplicant<N: NetworkIo> {
     pae: SupplicantPae<SupplicantPaeAdapter<N>>,
     /// CP state machine. Per IEEE 802.1X-2020, Clause 10.
     cp: CpStateMachine,
+    /// Logging reload handle. `Some` when the binary entry point wired
+    /// one in; `None` when constructed via the bare `Supplicant::new`
+    /// (e.g. unit tests that do not touch `tracing-subscriber`).
+    /// Per INT-009 (#117).
+    logging: Option<Logging>,
     /// Link flap reconnection state. Per REQ-NF-REL-003 (#59).
     reconnection: ReconnectionState,
     /// Previous link state (for detecting transitions).
@@ -102,8 +108,23 @@ impl<N: NetworkIo> Supplicant<N> {
     /// `impl<T: NetworkIo + ?Sized> NetworkIo for Arc<T>` in
     /// `crate::network_io`.
     ///
-    /// Per ARC-C-WPA-005 (#85).
+    /// Per ARC-C-WPA-005 (#85). For control-socket log-level reload
+    /// support (INT-009 / #117), use [`Supplicant::with_logging`] instead.
     pub fn new(config: Config, network: N) -> Result<Self> {
+        Self::build(config, network, None)
+    }
+
+    /// Initialize the supplicant with a [`Logging`] handle so the
+    /// control socket can reload the log level at runtime.
+    ///
+    /// Per INT-009 (#117) and REQ-NF-DEPLOY-001 (#68). The binary
+    /// entry point calls this after `Logging::init`; tests inject a
+    /// recording handle via [`Logging::from_test_handle`].
+    pub fn with_logging(config: Config, network: N, logging: Logging) -> Result<Self> {
+        Self::build(config, network, Some(logging))
+    }
+
+    fn build(config: Config, network: N, logging: Option<Logging>) -> Result<Self> {
         let network = Arc::new(network);
         let link_up = network.link_up();
         let identity = config.eap.identity.as_bytes().to_vec();
@@ -114,6 +135,7 @@ impl<N: NetworkIo> Supplicant<N> {
             network,
             pae,
             cp: CpStateMachine::new(0),
+            logging,
             reconnection: if link_up {
                 ReconnectionState::Idle
             } else {
@@ -508,8 +530,25 @@ impl<N: NetworkIo> Supplicant<N> {
                 tracing::info!(?state, "current state");
             }
             ControlCommand::SetLogLevel { level } => {
+                // Per INT-009 (#117) and REQ-NF-DEPLOY-001 (#68).
                 tracing::info!(%level, "log level change requested");
-                // TODO(INT-009 / #117): implement via tracing-subscriber reload
+                match &self.logging {
+                    Some(logging) => {
+                        if let Err(e) = logging.set_level(&level) {
+                            // Per ADR-EVT-007 (#79): never crash the
+                            // daemon on a control-socket command.
+                            tracing::warn!(error = %e, %level, "log level reload failed");
+                        } else {
+                            tracing::info!(%level, "log level reloaded");
+                        }
+                    }
+                    None => {
+                        tracing::warn!(
+                            %level,
+                            "log level change requested but no Logging handle wired (see INT-009 / #117)"
+                        );
+                    }
+                }
             }
             ControlCommand::Shutdown => {
                 self.shutdown();
