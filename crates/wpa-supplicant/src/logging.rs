@@ -31,9 +31,13 @@ impl Logging {
     /// Initialize structured logging with the given level.
     ///
     /// Returns a `Logging` handle that can change the log level at
-    /// runtime via [`Logging::set_level`].
+    /// runtime via [`Logging::set_level`]. The subscriber composes a
+    /// `tracing_subscriber::fmt::Layer` (human-readable output on
+    /// stderr) underneath the reload layer so the binary actually
+    /// emits log lines — without an `fmt` layer the registry has no
+    /// output sink.
     ///
-    /// Per REQ-NF-DEPLOY-001 (#68).
+    /// Per REQ-NF-DEPLOY-001 (#68) and INT-001 (#109).
     pub fn init(level: &str) -> Result<Self> {
         let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(level));
 
@@ -42,7 +46,11 @@ impl Logging {
             _,
         ) = reload::Layer::new(filter);
 
-        let subscriber = tracing_subscriber::registry().with(reload_layer);
+        let fmt_layer = tracing_subscriber::fmt::layer().with_writer(std::io::stderr);
+
+        let subscriber = tracing_subscriber::registry()
+            .with(reload_layer)
+            .with(fmt_layer);
 
         subscriber.try_init()?;
 
