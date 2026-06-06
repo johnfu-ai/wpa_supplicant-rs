@@ -104,14 +104,33 @@ After finishing **any** unit of work, run this checklist before moving on:
    - `cargo fmt --all -- --check`
 2. **Commit** with the canonical format: `<type>: <subject> per <REQ-ID> (#<issue>)` (e.g. `feat(integration): wire EAPOL dispatch per INT-002 (#117)`).
 3. **Push and open / update the PR** with `gh pr create` / `gh pr edit`. The PR description must include `Fixes #<issue>` (or `Implements #<issue>` if the issue stays open as a tracking anchor). Before opening, invoke the local subagent `ieee-traceability-reviewer` (and, when MKA / CP / PAE timing changed, `mka-timing-auditor`).
-4. **After the PR lands**:
-   - Confirm GitHub auto-closed the linked issue; if not, comment with the closing commit SHA and close manually.
+4. **Merge the PR yourself — no human round-trip required.** This is a solo-developer repo with no branch protection and no required reviewers (verified 2026-06-06). After opening the PR:
+   - Wait for CI to finish: `gh pr checks <NN> --watch` (both `Test (x86_64)` and `Cross-build (aarch64)` must pass).
+   - Confirm `gh pr view <NN> --json mergeable,mergeStateStatus` returns `MERGEABLE` / `CLEAN`. If state is `BEHIND`, run `gh pr update-branch <NN>` and re-wait. If state is `DIRTY` (conflicts), **stop and surface to the user** — do not attempt automated conflict resolution.
+   - Squash-merge and delete the branch in one shot:
+     ```bash
+     gh pr merge <NN> --squash --delete-branch --subject "<PR title> (#<NN>)"
+     ```
+     Squash is the repo's default merge method (`viewerDefaultMergeMethod: SQUASH`); use it unless the PR is a stacked feature branch that should preserve its commit history.
+   - Sync local main: `git checkout main && git pull --ff-only && git branch -D <branch>`.
+   - **Do not wait for human approval to merge** — the user has explicitly authorized solo auto-merge (2026-06-06). The only blockers are: failing CI, `MERGEABLE != MERGEABLE`, conflicts (`DIRTY`), or a PR explicitly marked as draft / `WIP`. Anything else, merge.
+5. **After the PR lands**:
+   - Confirm GitHub auto-closed the linked issue. The `Fixes #N` / `Closes #N` / `Resolves #N` keywords auto-close on merge; `Implements #N` and `Relates to #N` **do not** — if you used those, close manually with `gh issue close <N> --comment "Closed by <merge-sha> (PR #<NN>)."`.
    - If a domain row in `docs/PROGRESS.md` changed (new crate complete, test count materially changed, gate status flipped), refresh it.
    - If a REQ chain in `02-requirements/traceability-matrix.md` gained a closing commit / implementing file / test, refresh that row.
    - Doc refreshes can ride the same PR or land as an immediate follow-up doc PR.
-5. **Tick `docs/TODO.md`**: mark the item `[x]` and **move** the entry to the *Done* section with the PR number and date — the living-document rule at `docs/TODO.md:8`. Do not delete; the trail is audit evidence per `StR-006: Full Audit Trail and Traceability`.
-6. **If the task closed a whole phase**: write `0N-<phase-name>/phase-gate-report.md` using `04-design/phase-gate-report.md` as the template, then run `/phase-gate-check`.
-7. **Surface newly-discovered work as fresh GitHub issues** — never leave a bare `TODO:` marker in the code without a tracking issue (and update `docs/TODO.md` to reference the new issue).
+6. **Tick `docs/TODO.md`**: mark the item `[x]` and **move** the entry to the *Done* section with the PR number and date — the living-document rule at `docs/TODO.md:8`. Do not delete; the trail is audit evidence per `StR-006: Full Audit Trail and Traceability`.
+7. **If the task closed a whole phase**: write `0N-<phase-name>/phase-gate-report.md` using `04-design/phase-gate-report.md` as the template, then run `/phase-gate-check`.
+8. **Surface newly-discovered work as fresh GitHub issues** — never leave a bare `TODO:` marker in the code without a tracking issue (and update `docs/TODO.md` to reference the new issue).
+
+### When NOT to auto-merge
+
+Skip step 4's automation and ask the user first when:
+- A PR review explicitly requests changes (`gh pr view <NN> --json reviewDecision` returns `CHANGES_REQUESTED`).
+- The PR is stacked on another open PR (merging the child before the parent rewrites history awkwardly).
+- The diff touches `SKILL/`, `.github/workflows/`, or `.claude/settings*.json` — these change the agent's own operating envelope; human eyes first.
+- `mergeStateStatus` is `DIRTY`, `BLOCKED`, or `UNSTABLE`. Surface the reason; do not paper over.
+- Any CI check fails — root-cause via `/corrective-action-loop`, never `--admin` over a red build.
 
 ## 7. Reference materials — sibling repos (read-only)
 
