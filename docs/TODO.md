@@ -18,7 +18,7 @@ This file is a **living todo list** that combines (a) GitHub issue state, (b) ga
 | 03 Architecture | ✅ Approved | 8 ADR + 5 ARC-C + 4 QA-SC closed-approved |
 | 04 Detailed Design | ✅ Approved | `04-design/phase-gate-report.md` dated 2026-05-17 |
 | 05 Implementation | 🟡 In progress | 66 issues carry `phase:05-approved`; 12 wiring TODOs remain in `wpa-supplicant` |
-| 06 Integration | ⬜ Not started | `06-integration/` has README only |
+| 06 Integration | 🟡 In progress | 1 of 9 INT-NNN landed (INT-002 in #118); INT-001/003–009 tracked as #109, #111–#117 |
 | 07 V&V | ⬜ Not started | `07-verification-validation/` has README only |
 | 08 Transition | ⬜ Not started | `08-transition/` has README only |
 | 09 Operation & Maintenance | ⬜ Not started | `09-operation-maintenance/` has README only |
@@ -49,16 +49,16 @@ Foundation work. Everything else assumes accurate status.
 The per-crate state machines are done. Phase 06 wires them inside the `wpa-supplicant` binary. Twelve concrete code-level `TODO:` markers remain — they are the integration backlog.
 
 ### P2.1 — Open Phase 06 integration issues
-- [ ] **P2.1.0 Create the `phase:06-integration` GitHub label** (color follows the `1D76DB` blue used by other `phase:0X-…` labels).
-- [ ] **P2.1.1 INT-001: Wire config-load → Supplicant construction → event loop in `main.rs`** (`main.rs:41` TODO)
-- [ ] **P2.1.2 INT-002: Dispatch inbound EAPOL frames to `SupplicantPae::handle_eapol()`** (`supplicant.rs:133` TODO)
-- [ ] **P2.1.3 INT-003: Drive `step()` on active state machines and dispatch the returned `PaeEvent`s** (`supplicant.rs:137-138` TODOs)
-- [ ] **P2.1.4 INT-004: Tear down MKA session and reset Supplicant PAE on disconnect** (`supplicant.rs:170` TODO)
-- [ ] **P2.1.5 INT-005: Forward MKA-derived SAK install events to the CP state machine** (`supplicant.rs:311` TODO)
-- [ ] **P2.1.6 INT-006: Expose live state in control-socket status response** (`supplicant.rs:328`, `:330`, `:332` TODOs — read `pae_state` from `SupplicantPae`, `logon_state` from `LogonProcess`, `mka_established` from `MkaParticipant`)
-- [ ] **P2.1.7 INT-007: Implement control-socket `reauthenticate` command** (`supplicant.rs:344` TODO — trigger `SupplicantPae` reauthentication)
-- [ ] **P2.1.8 INT-008: Implement control-socket `logoff` command** (`supplicant.rs:348` TODO — trigger `SupplicantPae` logoff)
-- [ ] **P2.1.9 INT-009: Runtime log-level reload via `tracing-subscriber`** (`supplicant.rs:356` TODO)
+- [x] **P2.1.0 Create the `phase:06-integration` GitHub label** (color follows the `1D76DB` blue used by other `phase:0X-…` labels). — done 2026-06-06; also added `type:integration-task` (`BFD4F2`).
+- [ ] **P2.1.1 INT-001: Wire config-load → Supplicant construction → event loop in `main.rs`** — tracked in **#109** (`main.rs:13` TODO)
+- [x] **P2.1.2 INT-002: Dispatch inbound EAPOL frames to `SupplicantPae::handle_eapol()`** — landed in **#118** (issue **#110**), 2026-06-06. EAPOL receive path now parses via `EapolFrame::decode` and dispatches into `SupplicantPae::handle_eapol`. New `SupplicantPaeAdapter<N>` module; `wpa-supplicant` split into `lib.rs` + `main.rs`; blanket `impl NetworkIo for Arc<T>`; integration test under `crates/wpa-supplicant/tests/eapol_dispatch.rs`.
+- [ ] **P2.1.3 INT-003: Drive `step()` on active state machines and dispatch the returned `PaeEvent`s** — tracked in **#111** (`supplicant.rs:159` TODO)
+- [ ] **P2.1.4 INT-004: Tear down MKA session and reset Supplicant PAE on disconnect** — tracked in **#112** (`supplicant.rs:170` TODO)
+- [ ] **P2.1.5 INT-005: Forward MKA-derived SAK install events to the CP state machine** — tracked in **#113** (`supplicant.rs:311` TODO)
+- [ ] **P2.1.6 INT-006: Expose live state in control-socket status response** — tracked in **#114**. `pae_state` already wired in #118; remaining: `logon_state`, `selected_nid`, `mka_established`, `mka_live_peers` (`supplicant.rs:330/332` TODOs).
+- [ ] **P2.1.7 INT-007: Implement control-socket `reauthenticate` command** — tracked in **#115** (`supplicant.rs:344` TODO)
+- [ ] **P2.1.8 INT-008: Implement control-socket `logoff` command** — tracked in **#116** (`supplicant.rs:348` TODO)
+- [ ] **P2.1.9 INT-009: Runtime log-level reload via `tracing-subscriber`** — tracked in **#117** (`supplicant.rs:356` TODO)
 
 ### P2.2 — Implement against the new issues (TDD)
 - [ ] **P2.2 For each INT-NNN, follow `SKILL/prompts/tdd-compile.prompt.md`**: write a cross-crate integration test in `tests/` first (Red), then add the wiring in `supplicant.rs`/`main.rs` (Green), then refactor.
@@ -110,8 +110,11 @@ Empty today. Plan, do not yet execute, until Phase 07 closes.
 
 ## Done
 
+- [x] *(2026-06-06)* **P2.1.2 / INT-002** Dispatch inbound EAPOL frames to `SupplicantPae::handle_eapol()` — landed in **#118** (issue **#110**). Splits `wpa-supplicant` into `lib.rs` + `main.rs`; adds `SupplicantPaeAdapter<N>` (`pae_adapter.rs`); blanket `impl NetworkIo for Arc<T>` so the adapter and event loop share one network handle; new accessors `pae_state()`, `pae_set_authenticate()`, `pae_counters()`; integration test `tests/eapol_dispatch.rs` covers well-formed and malformed frames. `state()` now reports the live PAE state. PASS-WITH-WARNINGS from `ieee-traceability-reviewer`; warnings addressed in-PR.
+- [x] *(2026-06-06)* **P2.1.0** Create `phase:06-integration` and `type:integration-task` GitHub labels.
+- [x] *(2026-06-06)* **P2.1.1, P2.1.3–P2.1.9** Opened all nine INT-NNN Phase 06 tracking issues (#109–#117) with detailed scope, acceptance criteria, dependency notes, and IEEE clause references — sets up the rest of Phase 06 as discrete TDD slices.
 - [x] *(2026-06-06)* **P1.2** Create `docs/PROGRESS.md` — landed in **#108**. Operator-facing roll-up: phase status, per-domain (PAE / MKA / CP / Logon / EAP / wpa-supplicant) implementation depth, aggregate summary (62/62 REQ unit-implemented or governance-satisfied), architectural anchor coverage, cross-cutting posture snapshot, open-gap pointers, maintainer footer.
-- [x] *(2026-06-06)* **P1.1** Refresh `02-requirements/traceability-matrix.md` to reflect Phase-05 implementation — landed in **#108** (commit `fa77b7f`). Per-REQ closing-commit + implementing-file + test-fn tables added across PAE / MKA / CP / Logon / EAP / EAPOL / NF; 5 Phase-02 gaps closed; 6 open gaps tracked 1:1 in this file.
+- [x] *(2026-06-06)* **P1.1** Refresh `02-requirements/traceability-matrix.md` to reflect Phase-05 implementation — landed in **#108** (commit `fa77b7f`). Per-REQ closing-commit + implementing-file + test-fn tables added across PAE / MKA / CP / Logon / EAPOL / NF; 5 Phase-02 gaps closed; 6 open gaps tracked 1:1 in this file.
 
 *(Move further completed items here with PR link, in reverse-chronological order.)*
 
