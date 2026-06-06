@@ -187,7 +187,20 @@ impl<N: NetworkIo> Supplicant<N> {
             }
         }
 
-        // TODO(INT-003 / #111): Call step() on active state machines and dispatch PaeEvents
+        // 4. Drive the Supplicant PAE state machine — per INT-003 (#111) and Cl.8.3.
+        //
+        // `step()` is timer-driven: it consumes the PAE's internal flags
+        // (`authenticate`, `eap_start`, etc.) and the configured
+        // `startWhen` / `authWhile` / `heldWhile` timers, advancing
+        // state and transmitting EAPOL-Start as appropriate. Per
+        // ADR-EVT-007 (#79): a step error must not abort the loop.
+        if let Err(e) = self.pae.step() {
+            tracing::warn!(error = %e, "Supplicant PAE step error");
+        }
+
+        // TODO(INT-005 / #113): construct an `MkaParticipant` and call
+        // its `step()` here, then forward any returned `PaeEvent`s into
+        // `dispatch_event(event)` so the Cl.9 / Cl.10 path closes.
 
         Ok(events)
     }
@@ -297,36 +310,18 @@ impl<N: NetworkIo> Supplicant<N> {
         self.pae.counters()
     }
 
-    /// Drive one timer-driven step of the Supplicant PAE state machine.
-    ///
-    /// Per IEEE 802.1X-2020 Clause 8.3. Thin pass-through to
-    /// `SupplicantPae::step()`.
-    ///
-    /// **Integration shim — slated for removal.** Once INT-003 (#111) wires
-    /// the periodic `tick()` invocation of `pae.step()` and INT-005 (#113)
-    /// connects the EAP-peer crate as the higher-layer driver, this
-    /// pass-through is no longer needed at the public surface and should
-    /// be deleted. Today it lets integration tests (and INT-003 itself,
-    /// while under construction) advance the PAE through timer-driven
-    /// transitions without going through the receive path.
-    ///
-    /// # Errors
-    /// Propagates any `EapolError` returned by the underlying state machine.
-    pub fn pae_step(&mut self) -> Result<(), EapolError> {
-        self.pae.step()
-    }
-
     /// Signal EAP-Success from the higher layer to the Supplicant PAE.
     ///
     /// Per IEEE 802.1X-2020 Clause 8.3. Thin pass-through to
     /// `SupplicantPae::eap_success()`.
     ///
     /// **Integration shim — slated for removal.** In the eventual
-    /// EAP-peer wiring (planned alongside INT-003 / #111 and the
-    /// EAP-peer-to-PAE bridge that will be tracked when INT-003 lands),
-    /// `eap_success` will be invoked by the EAP layer when the inner
-    /// method completes successfully. This public accessor exists today
-    /// only so integration tests can mock-drive the signal.
+    /// EAP-peer wiring (a future INT-NNN that bridges `eap-peer` into
+    /// `Supplicant`), `eap_success` will be invoked by the EAP layer
+    /// when the inner method completes successfully. This public
+    /// accessor exists today only so integration tests can mock-drive
+    /// the signal — its sibling `pae_step` was already removed in
+    /// INT-003 (#111) once the tick loop drove `pae.step()` directly.
     ///
     /// # Errors
     /// Returns `EapolError::InvalidTransition` if the PAE is not in

@@ -99,8 +99,9 @@ fn test_state_json_round_trip_schema_stable() {
 ///
 /// The `pae_state` field in `Supplicant::state()` reflects the live
 /// Supplicant PAE state — not a hardcoded default. After a
-/// `pae_set_authenticate(true) + pae_step()` sequence the PAE moves to
-/// `Connecting` per Cl.8.3, and the JSON must record that.
+/// `pae_set_authenticate(true) + tick()` sequence the PAE moves to
+/// `Connecting` per Cl.8.3 (the tick loop drives `pae.step()` per
+/// INT-003 / #111), and the JSON must record that.
 #[test]
 fn test_state_pae_field_is_live() {
     let config = make_config();
@@ -115,9 +116,9 @@ fn test_state_pae_field_is_live() {
         json_before
     );
 
-    // Drive PAE: Disconnected -> Connecting via the public shim.
+    // Drive PAE: Disconnected -> Connecting via tick() per INT-003.
     supp.pae_set_authenticate(true);
-    supp.pae_step().unwrap();
+    supp.tick().unwrap();
 
     let json_after = serde_json::to_string(&supp.state()).unwrap();
     assert!(
