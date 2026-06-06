@@ -29,10 +29,10 @@ This file is a **living todo list** that combines (a) GitHub issue state, (b) ga
 
 Foundation work. Everything else assumes accurate status.
 
-- [ ] **P1.1 Refresh `02-requirements/traceability-matrix.md`** (`SKILL/prompts/traceability-builder.prompt.md`)
-  - The "REQ → Code → TEST Chain" table still says **Code Status: Stub** for every domain — this has been wrong since the Phase 05 work landed.
-  - Update each row to reflect actual code state, link to closing PRs, and list any tests that satisfy each REQ.
-  - Re-run the bidirectional validation checks and update the "Gap Analysis" section.
+- [x] **P1.1 Refresh `02-requirements/traceability-matrix.md`** — landed in #108 (commit `fa77b7f`, 2026-06-06).
+  - Replaced the single six-row "REQ → Code → TEST Chain" summary with seven per-domain tables (PAE / MKA / CP / Logon / EAP / EAPOL / NF) listing per REQ: issue → closing commit → implementing source files → dedicated tests → status.
+  - Added Implementation Summary (16 065 LoC / 393 tests / 12 ignored perf across five crates).
+  - Added four new bidirectional validation checks; rewrote Gap Analysis (5 Phase-02 gaps closed, 6 open gaps tracked 1:1 in this file).
 - [ ] **P1.2 Create `docs/PROGRESS.md`** (new file — analogous to the gate reports)
   - Mirror the *Phase Status at a Glance* table above.
   - Add per-domain implementation status (PAE / MKA / CP / Logon / EAP / EAPOL / wpa-supplicant binary) with closed-PR counts and remaining gaps.
@@ -106,9 +106,9 @@ Empty today. Plan, do not yet execute, until Phase 07 closes.
 
 ## Done
 
-*(Move completed items here with PR link, in reverse-chronological order. Example format:)*
+- [x] *(2026-06-06)* **P1.1** Refresh `02-requirements/traceability-matrix.md` to reflect Phase-05 implementation — landed in **#108** (commit `fa77b7f`). Per-REQ closing-commit + implementing-file + test-fn tables added across PAE / MKA / CP / Logon / EAP / EAPOL / NF; 5 Phase-02 gaps closed; 6 open gaps tracked 1:1 in this file.
 
-- [x] *(2026-06-XX)* Example completed item — landed in #PR-NUMBER.
+*(Move further completed items here with PR link, in reverse-chronological order.)*
 
 ---
 
