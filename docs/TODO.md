@@ -18,7 +18,7 @@ This file is a **living todo list** that combines (a) GitHub issue state, (b) ga
 | 03 Architecture | ✅ Approved | 8 ADR + 5 ARC-C + 4 QA-SC closed-approved |
 | 04 Detailed Design | ✅ Approved | `04-design/phase-gate-report.md` dated 2026-05-17 |
 | 05 Implementation | 🟡 In progress | 66 issues carry `phase:05-approved`; 12 wiring TODOs remain in `wpa-supplicant` |
-| 06 Integration | 🟡 In progress | 1 of 9 INT-NNN landed (INT-002 in #118); INT-001/003–009 tracked as #109, #111–#117 |
+| 06 Integration | 🟡 In progress | 3 of 9 INT-NNN landed (INT-002 in #118; INT-007 + INT-008 in #119); INT-001/003–006/009 tracked as #109, #111–#114, #117 |
 | 07 V&V | ⬜ Not started | `07-verification-validation/` has README only |
 | 08 Transition | ⬜ Not started | `08-transition/` has README only |
 | 09 Operation & Maintenance | ⬜ Not started | `09-operation-maintenance/` has README only |
@@ -56,8 +56,8 @@ The per-crate state machines are done. Phase 06 wires them inside the `wpa-suppl
 - [ ] **P2.1.4 INT-004: Tear down MKA session and reset Supplicant PAE on disconnect** — tracked in **#112** (`supplicant.rs:170` TODO)
 - [ ] **P2.1.5 INT-005: Forward MKA-derived SAK install events to the CP state machine** — tracked in **#113** (`supplicant.rs:311` TODO)
 - [ ] **P2.1.6 INT-006: Expose live state in control-socket status response** — tracked in **#114**. `pae_state` already wired in #118; remaining: `logon_state`, `selected_nid`, `mka_established`, `mka_live_peers` (`supplicant.rs:330/332` TODOs).
-- [ ] **P2.1.7 INT-007: Implement control-socket `reauthenticate` command** — tracked in **#115** (`supplicant.rs:344` TODO)
-- [ ] **P2.1.8 INT-008: Implement control-socket `logoff` command** — tracked in **#116** (`supplicant.rs:348` TODO)
+- [x] **P2.1.7 INT-007: Implement control-socket `reauthenticate` command** — landed in **#119** (issue **#115**), 2026-06-06. `ControlCommand::Reauthenticate` now calls `SupplicantPae::reauthenticate()`; invalid-state requests downgrade to `warn!` per ADR-EVT-007 (#79).
+- [x] **P2.1.8 INT-008: Implement control-socket `logoff` command** — landed in **#119** (issue **#116**), 2026-06-06. `ControlCommand::Logoff` now calls `SupplicantPae::logoff()`; MACsec-secured suppression test path deferred to INT-005 (#113); MKA teardown deferred to INT-004 (#112).
 - [ ] **P2.1.9 INT-009: Runtime log-level reload via `tracing-subscriber`** — tracked in **#117** (`supplicant.rs:356` TODO)
 
 ### P2.2 — Implement against the new issues (TDD)
@@ -110,6 +110,7 @@ Empty today. Plan, do not yet execute, until Phase 07 closes.
 
 ## Done
 
+- [x] *(2026-06-06)* **P2.1.7 / INT-007 + P2.1.8 / INT-008** Wire control-socket `reauthenticate` and `logoff` commands into `SupplicantPae` — landed in **#119** (issues **#115**, **#116**). Both commands now drive the Cl.8.3 / Cl.8.5 paths; invalid-state requests downgrade to `warn!` per ADR-EVT-007 so the daemon cannot be crashed via the control socket. Added two thin integration-shim accessors (`pae_step`, `pae_eap_success`) doc-marked for removal under INT-003 (#111); cleanup hook recorded on that issue. New `tests/control_reauth_logoff.rs` with 4 cases. `SetLogLevel` TODO tightened to reference INT-009 (#117). PASS-WITH-WARNINGS from `ieee-traceability-reviewer`; warning addressed in-PR.
 - [x] *(2026-06-06)* **P2.1.2 / INT-002** Dispatch inbound EAPOL frames to `SupplicantPae::handle_eapol()` — landed in **#118** (issue **#110**). Splits `wpa-supplicant` into `lib.rs` + `main.rs`; adds `SupplicantPaeAdapter<N>` (`pae_adapter.rs`); blanket `impl NetworkIo for Arc<T>` so the adapter and event loop share one network handle; new accessors `pae_state()`, `pae_set_authenticate()`, `pae_counters()`; integration test `tests/eapol_dispatch.rs` covers well-formed and malformed frames. `state()` now reports the live PAE state. PASS-WITH-WARNINGS from `ieee-traceability-reviewer`; warnings addressed in-PR.
 - [x] *(2026-06-06)* **P2.1.0** Create `phase:06-integration` and `type:integration-task` GitHub labels.
 - [x] *(2026-06-06)* **P2.1.1, P2.1.3–P2.1.9** Opened all nine INT-NNN Phase 06 tracking issues (#109–#117) with detailed scope, acceptance criteria, dependency notes, and IEEE clause references — sets up the rest of Phase 06 as discrete TDD slices.
