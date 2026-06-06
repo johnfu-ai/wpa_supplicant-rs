@@ -1,0 +1,119 @@
+# Project TODO — wpa_supplicant-rs
+
+**Generated:** 2026-06-06
+**Source of truth basis:** GitHub Issues (23 open, 121 closed at last count), `git log`, lifecycle phase directories under `wpa_supplicant-rs/`, and `02-requirements/traceability-matrix.md`.
+
+This file is a **living todo list** that combines (a) GitHub issue state, (b) gaps identified by reading recent commits and the lifecycle docs, and (c) the project's own SKILL workflow.
+
+> **Living-document rule:** when an item lands a PR, mark it `[x]` and move the entry to the *Done* section at the bottom (do **not** delete — the trail is part of the audit evidence per `StR-006: Full Audit Trail and Traceability`).
+
+---
+
+## Phase Status at a Glance
+
+| Phase | State | Evidence |
+|---|---|---|
+| 01 Stakeholder Requirements | ✅ Approved | 10 StR issues `phase:01` closed-approved |
+| 02 Requirements | ✅ Approved | 37 REQ-F + 25 REQ-NF closed-approved; matrix at `02-requirements/traceability-matrix.md` |
+| 03 Architecture | ✅ Approved | 8 ADR + 5 ARC-C + 4 QA-SC closed-approved |
+| 04 Detailed Design | ✅ Approved | `04-design/phase-gate-report.md` dated 2026-05-17 |
+| 05 Implementation | 🟡 In progress | 66 issues carry `phase:05-approved`; 12 wiring TODOs remain in `wpa-supplicant` |
+| 06 Integration | ⬜ Not started | `06-integration/` has README only |
+| 07 V&V | ⬜ Not started | `07-verification-validation/` has README only |
+| 08 Transition | ⬜ Not started | `08-transition/` has README only |
+| 09 Operation & Maintenance | ⬜ Not started | `09-operation-maintenance/` has README only |
+
+---
+
+## Priority 1 — Refresh stale tracking artifacts (do first)
+
+Foundation work. Everything else assumes accurate status.
+
+- [ ] **P1.1 Refresh `02-requirements/traceability-matrix.md`** (`SKILL/prompts/traceability-builder.prompt.md`)
+  - The "REQ → Code → TEST Chain" table still says **Code Status: Stub** for every domain — this has been wrong since the Phase 05 work landed.
+  - Update each row to reflect actual code state, link to closing PRs, and list any tests that satisfy each REQ.
+  - Re-run the bidirectional validation checks and update the "Gap Analysis" section.
+- [ ] **P1.2 Create `docs/PROGRESS.md`** (new file — analogous to the gate reports)
+  - Mirror the *Phase Status at a Glance* table above.
+  - Add per-domain implementation status (PAE / MKA / CP / Logon / EAP / EAPOL / wpa-supplicant binary) with closed-PR counts and remaining gaps.
+  - Link to the latest gate report for each completed phase.
+
+---
+
+## Priority 2 — Phase 06 Integration (the active frontier)
+
+The per-crate state machines are done. Phase 06 wires them inside the `wpa-supplicant` binary. Twelve concrete code-level `TODO:` markers remain — they are the integration backlog.
+
+### P2.1 — Open Phase 06 integration issues
+- [ ] **P2.1.0 Create the `phase:06-integration` GitHub label** (color follows the `1D76DB` blue used by other `phase:0X-…` labels).
+- [ ] **P2.1.1 INT-001: Wire config-load → Supplicant construction → event loop in `main.rs`** (`main.rs:41` TODO)
+- [ ] **P2.1.2 INT-002: Dispatch inbound EAPOL frames to `SupplicantPae::handle_eapol()`** (`supplicant.rs:133` TODO)
+- [ ] **P2.1.3 INT-003: Drive `step()` on active state machines and dispatch the returned `PaeEvent`s** (`supplicant.rs:137-138` TODOs)
+- [ ] **P2.1.4 INT-004: Tear down MKA session and reset Supplicant PAE on disconnect** (`supplicant.rs:170` TODO)
+- [ ] **P2.1.5 INT-005: Forward MKA-derived SAK install events to the CP state machine** (`supplicant.rs:311` TODO)
+- [ ] **P2.1.6 INT-006: Expose live state in control-socket status response** (`supplicant.rs:328`, `:330`, `:332` TODOs — read `pae_state` from `SupplicantPae`, `logon_state` from `LogonProcess`, `mka_established` from `MkaParticipant`)
+- [ ] **P2.1.7 INT-007: Implement control-socket `reauthenticate` command** (`supplicant.rs:344` TODO — trigger `SupplicantPae` reauthentication)
+- [ ] **P2.1.8 INT-008: Implement control-socket `logoff` command** (`supplicant.rs:348` TODO — trigger `SupplicantPae` logoff)
+- [ ] **P2.1.9 INT-009: Runtime log-level reload via `tracing-subscriber`** (`supplicant.rs:356` TODO)
+
+### P2.2 — Implement against the new issues (TDD)
+- [ ] **P2.2 For each INT-NNN, follow `SKILL/prompts/tdd-compile.prompt.md`**: write a cross-crate integration test in `tests/` first (Red), then add the wiring in `supplicant.rs`/`main.rs` (Green), then refactor.
+  - Place integration tests under `crates/wpa-supplicant/tests/` (the binary crate is the natural home for cross-crate seams).
+  - Each PR title format: `feat(integration): <thing> per INT-NNN (#issue)`.
+
+### P2.3 — Close out Phase 06
+- [ ] **P2.3.1 Add `06-integration/phase-gate-report.md`** following the structure of `04-design/phase-gate-report.md` (exit criteria → status table → evidence → recommendation).
+- [ ] **P2.3.2 Run `SKILL/prompts/phase-gate-check.prompt.md`** to confirm exit criteria; on approval, apply the `phase:06-approved` label to all INT-NNN issues.
+
+---
+
+## Priority 3 — Phase 07 Verification & Validation
+
+Plan and execute conformance + interop testing. The traceability matrix already flags the headline blocker: *"REQ-F-EAP-002/003/004 verification requires FreeRADIUS — plan interop test infrastructure in Phase 07."*
+
+- [ ] **P3.1 Stand up a FreeRADIUS-in-Docker interop harness** under `07-verification-validation/interop/`
+  - Compose file + provisioning scripts; CI job (gated, may be `-- --ignored` in unit CI).
+  - Cover EAP-TLS, EAP-PEAP, EAP-TEAP per REQ-F-EAP-002/003/004.
+- [ ] **P3.2 Create TEST-XXX-NNN issues** for every REQ-F/REQ-NF that does not yet have a `Verifies:` chain (use `SKILL/prompts/test-validate.prompt.md` to identify the gaps).
+- [ ] **P3.3 Produce clean-room verification artifact for REQ-NF-SEC-004**
+  - The traceability matrix calls this "manual-only; code-review gate" — write the actual review record in `07-verification-validation/clean-room-review.md`.
+- [ ] **P3.4 Run `SKILL/prompts/traceability-builder.prompt.md`** to verify the full `StR → REQ → ADR/ARC-C → Code → TEST` chain has no orphans.
+- [ ] **P3.5 Add `07-verification-validation/phase-gate-report.md`** and apply `phase:07-approved`.
+
+---
+
+## Priority 4 — Phase 08 Transition & Phase 09 O&M
+
+Empty today. Plan, do not yet execute, until Phase 07 closes.
+
+- [ ] **P4.1 Release packaging plan** in `08-transition/release-plan.md` (cargo publish strategy, version pinning policy, `cargo-deny` baseline, deb/rpm scope).
+- [ ] **P4.2 Operator runbook** in `09-operation-maintenance/runbook.md` (systemd unit examples, log-level tuning, control-socket usage, troubleshooting matrix).
+- [ ] **P4.3 Phase 08 gate report**, then Phase 09 entry.
+
+---
+
+## Priority 5 — Cross-cutting hygiene (do whenever it fits)
+
+- [ ] **P5.1 Run `SKILL/prompts/security-review.prompt.md`** over the recent feature batch (#37, #50, #51, #59, #68, #69, #70, #71, #72, #86) — overdue per `CLAUDE.md` workflow rule *"After implementing features, perform a security review."*
+- [ ] **P5.2 Add `cargo audit` + `cargo deny check` to CI** (`.github/workflows/ci.yml`).
+- [ ] **P5.3 Decide YANG management scope** — the `8021X-2020.YANG/` sibling repo is checked in but no Rust code consumes it. Either:
+  - (a) Open `ADR-MGMT-009: NETCONF/YANG management surface` via `SKILL/prompts/architecture-starter.prompt.md`, or
+  - (b) Add an explicit deferral note to `8021X-2020.YANG/README.md` so the scope decision is documented.
+- [ ] **P5.4 Sweep remaining `TODO:`/`FIXME:` markers** in `crates/wpa-supplicant/` after Phase 06 closes; convert any survivors into tracked issues.
+- [ ] **P5.5 Confirm `cargo test --workspace -- --ignored`** still passes on a representative host (wall-clock perf checks marked `#[ignore]` per commit `a90c033`).
+
+---
+
+## Done
+
+*(Move completed items here with PR link, in reverse-chronological order. Example format:)*
+
+- [x] *(2026-06-XX)* Example completed item — landed in #PR-NUMBER.
+
+---
+
+## Notes for AI agents reading this file
+
+- Open GitHub Issues today are **tracking anchors** (StR / ADR / ARC-C), not work tickets. Do not interpret an "open" issue as "todo" — check this file plus `git log` for actual work state.
+- The project's workflow is described in `SKILL/WORKFLOW-GUIDE.md`. Every item above maps to a step in that guide.
+- When in doubt about an item's status, run `gh issue list --state closed --search "<REQ-ID>"` and read the closing PR diff before re-doing work.
