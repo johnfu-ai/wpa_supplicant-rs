@@ -194,8 +194,15 @@ impl<N: NetworkIo> Supplicant<N> {
         // `startWhen` / `authWhile` / `heldWhile` timers, advancing
         // state and transmitting EAPOL-Start as appropriate. Per
         // ADR-EVT-007 (#79): a step error must not abort the loop.
-        if let Err(e) = self.pae.step() {
-            tracing::warn!(error = %e, "Supplicant PAE step error");
+        //
+        // Per INT-004 (#112): skip the step when the link is down — the
+        // PAE has just been reset to Disconnected by `link_changed(false)`
+        // and stepping with `authenticate=true` would immediately bounce
+        // it back to Connecting, defeating the teardown.
+        if link_up {
+            if let Err(e) = self.pae.step() {
+                tracing::warn!(error = %e, "Supplicant PAE step error");
+            }
         }
 
         // TODO(INT-005 / #113): construct an `MkaParticipant` and call
@@ -207,8 +214,11 @@ impl<N: NetworkIo> Supplicant<N> {
 
     /// Handle a link state change (link flap).
     ///
-    /// Per REQ-NF-REL-003 (#59): when link goes down, reset state machines;
-    /// when link comes back up, start reconnection with 10-second deadline.
+    /// Per REQ-NF-REL-003 (#59) and INT-004 (#112): when link goes
+    /// down, reset state machines (Supplicant PAE → Disconnected,
+    /// CP → Disabled, MKA participant dropped); when link comes back
+    /// up, start reconnection with a 10-second deadline and notify
+    /// the Supplicant PAE so it can restart authentication.
     fn handle_link_change(&mut self, link_up: bool) -> Result<Vec<PaeEvent>> {
         let events: Vec<PaeEvent> = Vec::new();
 
@@ -217,6 +227,13 @@ impl<N: NetworkIo> Supplicant<N> {
             self.reconnection = ReconnectionState::Reconnecting {
                 link_up_at: Instant::now(),
             };
+            // Per Cl.8.3 and INT-004 (#112): notify the Supplicant PAE
+            // of the link transition. If `authenticate` was set before
+            // the flap, this drives the PAE back to Connecting and
+            // emits an EAPOL-Start.
+            if let Err(e) = self.pae.link_changed(true) {
+                tracing::warn!(error = %e, "Supplicant PAE link-up notification failed");
+            }
             // Start EAP authentication by enabling the CP (Unsecured state)
             // Per Cl.10: EnableUnsecured transitions CP from Disabled → Unsecured
             match self.cp.handle_event(CpEvent::EnableUnsecured) {
@@ -230,9 +247,19 @@ impl<N: NetworkIo> Supplicant<N> {
         } else {
             tracing::warn!("link lost — resetting state machines per REQ-NF-REL-003");
             self.reconnection = ReconnectionState::LinkDown;
-            // Reset CP to Disabled
+            // Reset CP to Disabled.
             let _ = self.cp.handle_event(CpEvent::Disable);
-            // TODO: Tear down MKA session, reset Supplicant PAE
+            // Per Cl.8.3 and INT-004 (#112): reset Supplicant PAE to
+            // Disconnected, cancel its timers, and zero its retry
+            // count. `link_changed(false)` is total and infallible by
+            // construction (it only mutates state); the `_` guards
+            // against future signature changes.
+            let _ = self.pae.link_changed(false);
+            // TODO(INT-005 / #113): when `MkaParticipant` is constructed
+            // on `Supplicant`, drop it here so its peer list, SAK, and
+            // Hello timers do not survive into the next link-up. The
+            // `zeroize::Zeroize` impls already live in `pae::mka` per
+            // ADR-SEC-004 (#76).
         }
 
         Ok(events)
