@@ -48,6 +48,60 @@ impl<T: NetworkIo + ?Sized> NetworkIo for Arc<T> {
     }
 }
 
+/// No-op `NetworkIo` placeholder.
+///
+/// Per INT-001 (#109): a minimal stand-in that the binary entry point
+/// can construct so the daemon assembles and runs end-to-end without
+/// the L2 raw-socket binding (which is intentionally out of scope for
+/// INT-001 and tracked as a follow-up — see the issue body).
+///
+/// Behaviour:
+/// - `send_eapol` logs at `debug` and discards the frame.
+/// - `recv_eapol` always returns `None` (nothing arrives on the wire).
+/// - `mac_address` returns a fixed locally-administered MAC.
+/// - `link_up` reflects the value passed to [`NoopNetworkIo::new`].
+///
+/// **Do not use in production.** The eventual `RawSocketNetworkIo`
+/// (planned as a Phase-06 follow-up) replaces this with a real
+/// `AF_PACKET` socket bound to the configured interface.
+pub struct NoopNetworkIo {
+    mac: [u8; 6],
+    link_up: bool,
+}
+
+impl NoopNetworkIo {
+    /// Construct a `NoopNetworkIo` with the given MAC and link state.
+    ///
+    /// The binary entry point uses the locally-administered placeholder
+    /// MAC `02:00:00:00:00:00` until the raw-socket binding lands.
+    pub fn new(mac: [u8; 6], link_up: bool) -> Self {
+        Self { mac, link_up }
+    }
+}
+
+impl NetworkIo for NoopNetworkIo {
+    fn send_eapol(&self, dest: [u8; 6], frame: &[u8]) -> Result<()> {
+        tracing::debug!(
+            ?dest,
+            len = frame.len(),
+            "NoopNetworkIo: dropping EAPOL frame (INT-001 stub)"
+        );
+        Ok(())
+    }
+
+    fn recv_eapol(&self) -> Result<Option<Vec<u8>>> {
+        Ok(None)
+    }
+
+    fn mac_address(&self) -> [u8; 6] {
+        self.mac
+    }
+
+    fn link_up(&self) -> bool {
+        self.link_up
+    }
+}
+
 /// Mock network I/O for testing.
 ///
 /// Per ADR-SM-002 (#74).

@@ -25,7 +25,7 @@ pub use config::{
 };
 pub use control::{ControlCommand, ControlInterface};
 pub use logging::Logging;
-pub use network_io::NetworkIo;
+pub use network_io::{NetworkIo, NoopNetworkIo};
 pub use pae_adapter::SupplicantPaeAdapter;
 pub use shutdown::ShutdownHandler;
 pub use supplicant::{Supplicant, SupplicantState};
