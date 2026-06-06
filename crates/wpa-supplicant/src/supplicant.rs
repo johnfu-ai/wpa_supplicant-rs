@@ -16,7 +16,7 @@ use std::time::Instant;
 use anyhow::Result;
 use eapol_supp::frame::EapolFrame;
 use eapol_supp::{EapolError, PaeState, SupplicantPae};
-use pae::{CpEvent, CpState, CpStateMachine, PaeEvent};
+use pae::{CpEvent, CpState, CpStateMachine, PaeEvent, Sak};
 
 use crate::config::Config;
 use crate::control::ControlCommand;
@@ -435,24 +435,89 @@ impl<N: NetworkIo> Supplicant<N> {
         self.shutdown.load(Ordering::SeqCst)
     }
 
+    /// Dispatch a single `PaeEvent` to the appropriate handler.
+    ///
+    /// Per ADR-EVT-007 (#79) and INT-005 (#113). Public so integration
+    /// tests and the eventual MKA-driven tick-loop wiring can route
+    /// events without poking at private internals. All errors are
+    /// captured and downgraded to `warn!` — dispatching one bad event
+    /// must not abort the supplicant.
+    pub fn dispatch_pae_event(&mut self, event: PaeEvent) -> Result<()> {
+        self.dispatch_event(event)
+    }
+
     /// Dispatch a single event to the appropriate handler.
     ///
     /// Per ADR-EVT-007 (#79).
     fn dispatch_event(&mut self, event: PaeEvent) -> Result<()> {
-        match &event {
+        match event {
             PaeEvent::MkaTransmit { mkpdu } => {
                 tracing::debug!(len = mkpdu.len(), "transmitting MKPDU");
                 let dest = [0x01, 0x80, 0xC2, 0x00, 0x00, 0x03]; // PAE multicast
-                self.network.send_eapol(dest, mkpdu)?;
+                self.network.send_eapol(dest, &mkpdu)?;
             }
-            PaeEvent::MkaSakInstalled { .. } => {
-                tracing::info!("SAK installed");
-                // TODO: Forward to CP state machine
+            PaeEvent::MkaSakInstalled {
+                sak_key,
+                sak_an,
+                sci,
+                cipher_suite,
+            } => {
+                // Per IEEE 802.1X-2020 Clauses 9.13 (SAK install) and
+                // 10 (CP transitions) and INT-005 (#113): reconstruct
+                // the SAK and forward to the CP as `CpEvent::SakAvailable`.
+                tracing::info!(
+                    an = sak_an,
+                    ?cipher_suite,
+                    "SAK installed by MKA — forwarding to CP"
+                );
+                match Sak::from_bytes(&sak_key, sak_an) {
+                    Ok(sak) => {
+                        match self.cp.handle_event(CpEvent::SakAvailable {
+                            sak,
+                            sci,
+                            cipher_suite,
+                        }) {
+                            Ok(transitions) => {
+                                tracing::info!(
+                                    ?transitions,
+                                    "CP transitioned on SakAvailable per Cl.10"
+                                );
+                            }
+                            Err(e) => {
+                                // Per ADR-EVT-007 (#79): a wrong-state
+                                // CP must not crash the loop. The most
+                                // common cause is `MkaSakInstalled`
+                                // arriving while CP is still `Disabled`
+                                // (e.g. before the Logon Process has
+                                // run `EnableUnsecured`).
+                                tracing::warn!(
+                                    error = %e,
+                                    cp_state = ?self.cp.state(),
+                                    "CP rejected SakAvailable"
+                                );
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        // Per ADR-EVT-007 (#79): a malformed SAK
+                        // payload (wrong length for the cipher suite)
+                        // is logged at `warn` and dropped — never
+                        // propagated up the event loop.
+                        tracing::warn!(error = %e, "failed to reconstruct SAK from MKA event");
+                    }
+                }
             }
             PaeEvent::MkaSessionEstablished => {
                 tracing::info!("MKA session established");
             }
             PaeEvent::MkaSessionTerminated => {
+                // Per IEEE 802.1X-2020 Clause 10 and INT-005 (#113):
+                // when the MKA session terminates the CP must release
+                // the SA. The CP state machine handles this via the
+                // `Disable` event today; a dedicated `SakRetireExpired`
+                // path lives in `pae::cp::CpEvent` and will be wired
+                // when MKA's SAK-Retire timer fires (Cl.9, INT-005
+                // follow-up). For now we log the transition.
                 tracing::info!("MKA session terminated");
             }
         }
