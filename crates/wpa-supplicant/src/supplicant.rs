@@ -417,16 +417,34 @@ impl<N: NetworkIo> Supplicant<N> {
 
     /// Get current supplicant state for the control interface.
     ///
-    /// Per ARC-C-WPA-005 (#85). The `pae_state` field is sourced from the
-    /// live `SupplicantPae` per INT-002 (#110); `logon_state` and the
-    /// MKA fields will follow as their wiring lands (INT-006 / #114).
+    /// Per ARC-C-WPA-005 (#85) and INT-006 (#114). All field provenance:
+    ///
+    /// | Field             | Source                                                  | Wired by           |
+    /// |-------------------|---------------------------------------------------------|--------------------|
+    /// | `pae_state`       | `SupplicantPae::state()` — live                         | INT-002 (#110) ✅  |
+    /// | `cp_state`        | `CpStateMachine::state()` — live                        | INT-002 (#110) ✅  |
+    /// | `logon_state`     | `LogonProcess::state()` once constructed                | INT-001 (#109)     |
+    /// | `selected_nid`    | `LogonProcess::selected_nid()` once constructed         | INT-001 (#109)     |
+    /// | `mka_established` | `MkaParticipant::state() == Established` once wired     | INT-005 (#113)     |
+    /// | `mka_live_peers`  | `MkaParticipant::live_peers().count()` once wired       | INT-005 (#113)     |
+    ///
+    /// The Logon / MKA fields default to `None` / `false` / `0` while
+    /// those state machines are not yet plugged into `Supplicant`; when
+    /// INT-001 / INT-005 land, their populating PRs update this method
+    /// to read from the new fields. The schema is stable — control-socket
+    /// consumers (and the eventual NETCONF / YANG surface tracked under
+    /// `docs/TODO.md` P5.3) see every field on every call.
     pub fn state(&self) -> SupplicantState {
         SupplicantState {
             pae_state: format!("{:?}", self.pae.state()).to_lowercase(),
             cp_state: format!("{:?}", self.cp.state()).to_lowercase(),
-            logon_state: None, // TODO(INT-006 / #114): read from LogonProcess
+            // Per INT-006 (#114): populated when LogonProcess is wired
+            // into `Supplicant` under INT-001 (#109).
+            logon_state: None,
             selected_nid: None,
-            mka_established: false, // TODO(INT-006 / #114): read from MkaParticipant
+            // Per INT-006 (#114): populated when MkaParticipant is wired
+            // into `Supplicant` under INT-005 (#113).
+            mka_established: false,
             mka_live_peers: 0,
         }
     }
