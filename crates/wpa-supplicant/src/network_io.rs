@@ -3,6 +3,8 @@
 //! Per ADR-SM-002 (#74).
 //! Enables testability without real network interfaces.
 
+use std::sync::Arc;
+
 use anyhow::Result;
 
 /// Network I/O abstraction — abstracts L2 packet socket.
@@ -23,6 +25,27 @@ pub trait NetworkIo: Send + Sync {
 
     /// Check if the link is up.
     fn link_up(&self) -> bool;
+}
+
+/// Blanket forwarding impl so an `Arc<N>` can be passed wherever a `NetworkIo`
+/// is required. Used by `Supplicant` to share a single network handle between
+/// itself and the `SupplicantPae` adapter (INT-002 / #110).
+impl<T: NetworkIo + ?Sized> NetworkIo for Arc<T> {
+    fn send_eapol(&self, dest: [u8; 6], frame: &[u8]) -> Result<()> {
+        (**self).send_eapol(dest, frame)
+    }
+
+    fn recv_eapol(&self) -> Result<Option<Vec<u8>>> {
+        (**self).recv_eapol()
+    }
+
+    fn mac_address(&self) -> [u8; 6] {
+        (**self).mac_address()
+    }
+
+    fn link_up(&self) -> bool {
+        (**self).link_up()
+    }
 }
 
 /// Mock network I/O for testing.
