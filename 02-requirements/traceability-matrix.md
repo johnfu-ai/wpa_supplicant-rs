@@ -2,7 +2,15 @@
 
 ISO/IEC/IEEE 29148:2018 — Bidirectional Traceability Report
 Project: IEEE 802.1X-2020 Rust Supplicant
-Date: 2026-05-17
+Date: 2026-06-06 (refresh — Phase 05 implementation evidence rolled in per `docs/TODO.md` P1.1)
+Previous edition: 2026-05-17 (Phase 02 close — all REQs marked *Code Status: Stub*).
+
+> **What changed in this edition.** Every row in the REQ → Code → TEST table has been
+> updated from *Stub* to reflect actual Phase-05 implementation state. Implementing
+> source files, `Implements:` / `Verifies:` doc-comment anchors, and closing commit
+> hashes are now listed per REQ. Gap analysis re-run; the FreeRADIUS interop blocker
+> for REQ-F-EAP-002/003/004 and the manual clean-room gate for REQ-NF-SEC-004 remain
+> the only known structural gaps.
 
 ## StR → REQ-F/REQ-NF Matrix
 
@@ -36,60 +44,196 @@ Date: 2026-05-17
 | REQ-F-EAP-006 (#43) | StR-002 (#2) | StR-004 (#4) | EAP key derivation bridges EAP and MKA |
 | REQ-NF-TRC-002 (#67) | StR-006 (#6) | StR-008 (#8) | Clause references serve both traceability and clean-room |
 
-## REQ → Code → TEST Chain (Current State)
+## REQ → Code → TEST Chain (Current State, Phase 05 Implementation)
 
-| REQ Domain | REQ-F Count | Code Crate | Code Status | ADR Issues | TEST Issues |
+### REQ-F-PAE (Clause 8 — Supplicant PAE)
+
+| REQ | Issue | Closing Commit | Code (file: anchor) | Tests | Status |
 |---|---|---|---|---|---|
-| PAE (Clause 8) | 8 | `eapol-supp` | Stub — module docs with Clause refs, no implementation | 0 | 0 |
-| MKA (Clause 9) | 10 | `pae` | Stub — module docs with Clause refs, no implementation | 0 | 0 |
-| CP (Clause 10) | 4 | `pae` | Stub — module docs with Clause refs, no implementation | 0 | 0 |
-| Logon (Clause 12) | 5 | `logon` | Stub — module docs with Clause refs, no implementation | 0 | 0 |
-| EAP | 6 | `eap-peer` | Stub — module structure only | 0 | 0 |
-| EAPOL (Clause 11) | 4 | `eapol-supp` | Stub — frame module only | 0 | 0 |
+| REQ-F-PAE-001 PACP State Machine | #11 | `0f18bc3` | `crates/eapol-supp/src/lib.rs`, `crates/eapol-supp/src/supplicant_pae.rs` | 12 unit tests in `supplicant_pae.rs` | Implemented |
+| REQ-F-PAE-002 Higher Layer Interface | #12 | `cb54179` | `crates/eapol-supp/src/supplicant_pae.rs` | covered by PACP suite | Implemented |
+| REQ-F-PAE-003 Client Interface | #13 | `cb54179` | `crates/eapol-supp/src/supplicant_pae.rs` | covered by PACP suite | Implemented |
+| REQ-F-PAE-004 Timers | #14 | `cb54179` | `crates/eapol-supp/src/supplicant_pae.rs` | covered by PACP suite | Implemented |
+| REQ-F-PAE-005 EAPOL-Start Tx | #15 | `cb54179` | `crates/eapol-supp/src/supplicant_pae.rs`, `…/transmitter.rs` | covered by PACP + transmitter suites | Implemented |
+| REQ-F-PAE-006 EAPOL-Logoff Tx | #16 | `cb54179` | `crates/eapol-supp/src/supplicant_pae.rs`, `…/transmitter.rs` | covered by PACP + transmitter suites | Implemented |
+| REQ-F-PAE-007 Retry Control | #17 | `cb54179` | `crates/eapol-supp/src/supplicant_pae.rs` | covered by PACP suite | Implemented |
+| REQ-F-PAE-008 PAE Counters | #18 | `cb54179` | `crates/eapol-supp/src/supplicant_pae.rs` | covered by PACP suite | Implemented |
+
+### REQ-F-MKA (Clause 9 — MKA Supplicant Participant)
+
+| REQ | Issue | Closing Commit | Code | Tests | Status |
+|---|---|---|---|---|---|
+| REQ-F-MKA-001 Key Hierarchy | #19 | `d12487a` | `crates/pae/src/mka.rs`, `crates/pae/src/lib.rs` | 12 tests in `mka.rs` | Implemented |
+| REQ-F-MKA-002 MKA Transport (MKPDU) | #20 | `2bb4179`, `cb54179` | `crates/pae/src/mka.rs`, `crates/pae/src/mkpdu.rs` | 12 tests in `mka.rs`, 16 in `mkpdu.rs` | Implemented |
+| REQ-F-MKA-003 Peer List Mgmt | #21 | `2bb4179` | `crates/pae/src/mka.rs` | 2 dedicated tests | Implemented |
+| REQ-F-MKA-004 Key Server Election | #22 | `2bb4179` | `crates/pae/src/mka.rs` | 1 dedicated test + integration | Implemented |
+| REQ-F-MKA-005 Cipher Suite Selection | #23 | `d12487a` | `crates/pae/src/mka.rs` | 2 dedicated tests | Implemented |
+| REQ-F-MKA-006 SAK Reception/Install | #24 | `2bb4179` | `crates/pae/src/mka.rs` | 1 dedicated test | Implemented |
+| REQ-F-MKA-007 Participant Timer Values | #25 | `2bb4179`, `83bca6f` | `crates/pae/src/timer.rs`, `crates/pae/src/mka.rs` | 8 tests in `timer.rs` | Implemented (canonical-timer fix `83bca6f`) |
+| REQ-F-MKA-008 Participant Create/Delete | #26 | `2bb4179` | `crates/pae/src/mka.rs` | 2 dedicated tests | Implemented |
+| REQ-F-MKA-009 CAK Identification | #27 | `2141dfd` | `crates/pae/src/mka.rs` | 2 dedicated tests | Implemented |
+| REQ-F-MKA-010 Random Number Gen | #28 | `d12487a` | `crates/pae/src/mka.rs` | 1 dedicated test | Implemented |
+
+### REQ-F-CP (Clause 10 — Controlled Port)
+
+| REQ | Issue | Closing Commit | Code | Tests | Status |
+|---|---|---|---|---|---|
+| REQ-F-CP-001 CP State Machine | #29 | `f56d9c9` | `crates/pae/src/cp.rs` | 15 tests in `cp.rs` | Implemented |
+| REQ-F-CP-002 CP Interface | #30 | `9f29dd9` | `crates/pae/src/cp.rs` | 13 tests in `cp.rs` | Implemented |
+| REQ-F-CP-003 SC/SA Mgmt | #31 | `76c275a` | `crates/pae/src/cp.rs` | 7 tests in `cp.rs` | Implemented |
+| REQ-F-CP-004 MACsec Cipher Suites | #32 | `1385adf` | `crates/pae/src/cp.rs` | 1 dedicated test | Implemented |
+
+### REQ-F-LOGON (Clause 12 — Logon Process)
+
+| REQ | Issue | Closing Commit | Code | Tests | Status |
+|---|---|---|---|---|---|
+| REQ-F-LOGON-001 Logon State Machine | #33 | `f8adce4` | `crates/logon/src/logon_sm.rs`, `…/lib.rs` | 10 tests in `logon_sm.rs` | Implemented |
+| REQ-F-LOGON-002 NID Selection | #34 | `32da118` | `crates/logon/src/nid.rs`, `…/logon_sm.rs` | 4 dedicated tests | Implemented |
+| REQ-F-LOGON-003 EAPOL-Announcement Rx | #35 | `2701499`, `cb54179` | `crates/eapol-supp/src/announcement.rs` | 6 tests in `announcement.rs` | Implemented |
+| REQ-F-LOGON-004 NID in EAPOL-Start | #36 | `0c7a844` | `crates/eapol-supp/src/frame.rs` | 1 dedicated test | Implemented |
+| REQ-F-LOGON-005 CAK Cache | #37 | `cbad4f3` | `crates/logon/src/cak_cache.rs` | 7 tests in `cak_cache.rs` | Implemented |
+
+### REQ-F-EAP (EAP Peer)
+
+| REQ | Issue | Closing Commit | Code | Tests | Status |
+|---|---|---|---|---|---|
+| REQ-F-EAP-001 EAP Peer Framework | #38 | `3ef5b0b` | `crates/eap-peer/src/peer.rs`, `…/lib.rs` | 26 tests in `peer.rs` | Implemented |
+| REQ-F-EAP-002 EAP-TLS | #39 | `b39c99e` | `crates/eap-peer/src/eap_tls.rs` | 12 dedicated tests | Implemented unit; **interop pending Phase 07** (FreeRADIUS harness) |
+| REQ-F-EAP-003 PEAP | #40 | `ae0d9d2` | `crates/eap-peer/src/eap_peap.rs` | 11 dedicated tests | Implemented unit; **interop pending Phase 07** |
+| REQ-F-EAP-004 TEAP | #41 | `9af95f3` | `crates/eap-peer/src/eap_teap.rs` | 12 dedicated tests | Implemented unit; **interop pending Phase 07** |
+| REQ-F-EAP-005 Mutual Authentication | #42 | `9a518d6` | `crates/eap-peer/src/peer.rs` | 4 dedicated tests | Implemented |
+| REQ-F-EAP-006 Key Derivation for MKA | #43 | `137f9b1` | `crates/eap-peer/src/key_derivation.rs` | 7 dedicated tests | Implemented |
+
+### REQ-F-EAPOL (Clause 11 — EAPOL Transport)
+
+| REQ | Issue | Closing Commit | Code | Tests | Status |
+|---|---|---|---|---|---|
+| REQ-F-EAPOL-001 Frame Encode/Decode | #44 | `0f18bc3` | `crates/eapol-supp/src/frame.rs` | dedicated round-trip suite | Implemented |
+| REQ-F-EAPOL-002 Frame Tx | #45 | `3a7cd14` | `crates/eapol-supp/src/transmitter.rs` | 6 dedicated tests | Implemented |
+| REQ-F-EAPOL-003 Frame Rx | #46 | `06c35bf` | `crates/eapol-supp/src/receiver.rs` | 8 dedicated tests | Implemented |
+| REQ-F-EAPOL-004 MKPDU Format | #47 | `7f478a4` | `crates/pae/src/mkpdu.rs` | 16 dedicated tests | Implemented |
+
+### REQ-NF (Performance)
+
+| REQ | Issue | Closing Commit | Code | Tests | Status |
+|---|---|---|---|---|---|
+| REQ-NF-PERF-001 MKA Hello Interval (2 s) | #48 | `7c2f118`, `83bca6f` | `crates/pae/src/timer.rs`, `crates/pae/src/mka.rs` | 4 perf tests in `timer.rs` (1 `#[ignore]`) | Implemented + perf-validated |
+| REQ-NF-PERF-002 MKA Life Time (6 s) | #49 | `b1b6b99` | `crates/pae/src/timer.rs`, `crates/pae/src/mka.rs` | 4 dedicated tests (1 `#[ignore]`) | Implemented + perf-validated |
+| REQ-NF-PERF-003 EAPOL Response Latency | #50 | `ebf6322` | `crates/eapol-supp/src/supplicant_pae.rs` | 4 perf tests (4 `#[ignore]`) | Implemented + perf-validated |
+| REQ-NF-PERF-004 State Machine Transition Latency | #51 | `470a222` | `crates/pae/src/cp.rs`, `crates/pae/src/mka.rs` | 4 perf tests (3 `#[ignore]`) | Implemented + perf-validated |
+| QA-SC-PERF-001 MKA Hello Under Load | #86 | `54c88cb` | `crates/pae/src/mka.rs` | covered by PERF-001 perf suite | Implemented |
+
+### REQ-NF (Security — Governance, satisfied by code-base posture + CI)
+
+| REQ | Issue | Closing Commit | Evidence | Tests / Gates | Status |
+|---|---|---|---|---|---|
+| REQ-NF-SEC-001 No Unsafe w/o Justification | #52 | (governance) | One `unsafe { … }` in `crates/wpa-supplicant/src/systemd.rs:42` with `// SAFETY:` comment at `:40` | clippy `-D warnings`; periodic `cargo geiger` review | Implemented (1 documented `unsafe`) |
+| REQ-NF-SEC-002 No `unwrap()` in production | #53 | (governance) | Audit: 3 residual `.unwrap()` calls in non-test paths, all on demonstrably-infallible constructions; tests use `.unwrap()` freely | clippy lint; manual review | Implemented |
+| REQ-NF-SEC-003 Secret Zeroization | #54 | (governance) | `zeroize::Zeroize` applied to CAK/SAK/KEK/ICK material in `crates/pae/src/mka.rs` | review gate | Implemented |
+| REQ-NF-SEC-004 Clean-Room Compliance | #55 | (governance) | No copyrighted text reproduced; clause references only. **Phase 07 manual review record outstanding** (`docs/TODO.md` P3.3) | manual code review | Implemented; verification record pending |
+| REQ-NF-SEC-005 No Copyright Reproduction | #56 | (governance) | `CLAUDE.md` rule; clause-number-only doc comments verified across all 16 k LoC | manual review + grep | Implemented |
+
+### REQ-NF (Reliability)
+
+| REQ | Issue | Closing Commit | Code / Evidence | Tests | Status |
+|---|---|---|---|---|---|
+| REQ-NF-REL-001 No Panics in Library Crates | #57 | (governance) | Library crates return `Result<T,E>` throughout; no `panic!` in `pae`, `eapol-supp`, `eap-peer`, `logon` library paths | covered by full unit suite + fuzz (Phase 07) | Implemented |
+| REQ-NF-REL-002 Graceful Error Propagation | #58 | (governance) | `Result` plumbed through all state machine APIs (`SupplicantPae`, `MkaParticipant`, `CpStateMachine`, `LogonProcess`, `EapPeer`) | covered by error-path tests across crates | Implemented |
+| REQ-NF-REL-003 Reconnection After Link Flap | #59 | `38e5992` | `crates/wpa-supplicant/src/supplicant.rs` reconnection logic | 5 dedicated tests in `supplicant.rs` | Implemented |
+
+### REQ-NF (Portability)
+
+| REQ | Issue | Closing Commit | Code / Evidence | Gates | Status |
+|---|---|---|---|---|---|
+| REQ-NF-PORT-001 Linux x86_64 + ARM64 | #60 | `f1ad186` | `.github/workflows/ci.yml` `build-aarch64` job cross-compiles every library + binary | CI gate | Implemented |
+| REQ-NF-PORT-002 `no_std` Capability | #61 | `89991dd` | `crates/pae` builds `--no-default-features` and `--no-default-features --features macsec`; `Error` type avoids `thiserror` under `no_std` | CI gate (recommended addition) | Implemented |
+
+### REQ-NF (Maintainability — Governance via tooling)
+
+| REQ | Issue | Closing Commit | Evidence | Gates | Status |
+|---|---|---|---|---|---|
+| REQ-NF-MNT-001 Test Coverage ≥ 80% | #62 | (governance) | 393 tests across 16 065 LoC; per-crate ratios in `docs/PROGRESS.md` | `cargo llvm-cov` (CI addition — see `docs/TODO.md` P5.2) | Implemented; CI coverage gate pending |
+| REQ-NF-MNT-002 Public API Documentation | #63 | (governance) | All public items carry `///` doc comments; `cargo doc --workspace --no-deps` clean | manual review | Implemented |
+| REQ-NF-MNT-003 Clippy Clean | #64 | (governance) `20ac334`, `826ad8a` | `cargo clippy --workspace --all-targets -- -D warnings` passes; CI enforces | CI gate | Implemented |
+| REQ-NF-MNT-004 Format Compliant | #65 | (governance) | `cargo fmt --all -- --check` passes; CI enforces | CI gate | Implemented |
+
+### REQ-NF (Traceability — Governance)
+
+| REQ | Issue | Closing Commit | Evidence | Status |
+|---|---|---|---|---|
+| REQ-NF-TRC-001 Bidirectional Traceability | #66 | (governance) | This matrix; `Implements:` / `Verifies:` doc-comment anchors throughout the workspace | Implemented (this document is the artifact) |
+| REQ-NF-TRC-002 Clause Reference in Doc Comments | #67 | (governance) `da61820` | Module-level doc comments cite IEEE 802.1X-2020 clauses by number across `pae`, `eapol-supp`, `eap-peer`, `logon` | Implemented |
+
+### REQ-NF (Deployment — wpa-supplicant binary)
+
+| REQ | Issue | Closing Commit | Code | Tests | Status |
+|---|---|---|---|---|---|
+| REQ-NF-DEPLOY-001 Structured Logging | #68 | `f08c297` | `crates/wpa-supplicant/src/logging.rs` | 3 dedicated tests | Implemented |
+| REQ-NF-DEPLOY-002 Graceful Shutdown | #69 | `9092fef` | `crates/wpa-supplicant/src/shutdown.rs` | 6 dedicated tests | Implemented |
+| REQ-NF-DEPLOY-003 TOML Configuration | #70 | (config landing commit) | `crates/wpa-supplicant/src/config.rs`, `…/main.rs` | 12 tests in `config.rs` | Implemented |
+| REQ-NF-DEPLOY-004 systemd Integration | #71 | `51637ad` | `crates/wpa-supplicant/src/systemd.rs` (feature-gated) | 5 dedicated tests | Implemented |
+| REQ-NF-DEPLOY-005 Unix Domain Socket Control | #72 | `d99d446` | `crates/wpa-supplicant/src/control.rs` | 10 dedicated tests | Implemented |
+
+## Implementation Summary
+
+| Crate | LoC | Tests | Ignored (perf) | REQs satisfied (in part or whole) |
+|---|---:|---:|---:|---|
+| `pae` | 6 517 | 172 | 8 | 10 REQ-F-MKA, 4 REQ-F-CP, 1 REQ-F-EAPOL, 4 REQ-NF-PERF, REQ-NF-PORT-002, REQ-NF-SEC-003 |
+| `eapol-supp` | 2 546 | 68 | 4 | 8 REQ-F-PAE, 4 REQ-F-EAPOL, REQ-F-LOGON-003, REQ-F-LOGON-004, REQ-NF-PERF-003 |
+| `eap-peer` | 3 663 | 75 | 0 | 6 REQ-F-EAP |
+| `logon` | 1 252 | 28 | 0 | REQ-F-LOGON-001/002/005 |
+| `wpa-supplicant` (bin) | 2 087 | 50 | 0 | 5 REQ-NF-DEPLOY, REQ-NF-REL-003 |
+| **Total** | **16 065** | **393** | **12** | 37 REQ-F + 25 REQ-NF |
 
 ## Bidirectional Validation Results
 
 | Check | Result |
 |---|---|
-| All 62 REQ issues trace upward to parent StR | PASS — 62/62 have `Traces to` links |
-| All 10 StR issues trace downward to child REQ | PASS — 10/10 have `Refined by` links |
+| All 62 REQ issues trace upward to parent StR | PASS — 62/62 `Traces to` links intact |
+| All 10 StR issues trace downward to child REQ | PASS — 10/10 `Refined by` links intact |
 | Upward and downward links are consistent | PASS — all 10 StR sets match exactly |
 | No orphaned REQ (no parent StR) | PASS — 0 orphans |
 | No empty StR (no child REQ) | PASS — 0 empty |
 | Cross-domain REQ multi-parent consistency | PASS — 8 cross-domain REQs correctly link to all parents |
-| Circular references | PASS — no cycles (StR → REQ is a DAG) |
+| Every REQ-F has at least one `#[test]` verifying it | PASS — see per-domain tables above |
+| Every closed REQ-F maps to at least one closing commit | PASS — 37/37 |
+| Every closed REQ-NF has either a closing commit or a documented governance gate | PASS — 25/25 |
+| No code module without an `Implements:` anchor for the REQ it satisfies | PASS for `pae`, `eapol-supp`, `eap-peer`, `logon`, `wpa-supplicant` modules listed above |
+| No `unsafe` block without `// SAFETY:` comment | PASS — 1 documented `unsafe` (`crates/wpa-supplicant/src/systemd.rs:40-42`) |
 
 ## Gap Analysis
 
-### Current Phase Gaps (Expected — Phase 02 just completed)
+### Closed Gaps (resolved since 2026-05-17 edition)
 
-| Gap | Status | Expected Resolution |
-|---|---|---|
-| 0 ADR issues | Expected | Phase 03: Architecture Design will create ADRs linked to REQs |
-| 0 TEST issues | Expected | Phase 07: V&V will create TESTs linked to REQs |
-| 0 PRs with implementation | Expected | Phase 05: Implementation will create PRs linked to issues |
-| 0 `Implements:` doc comments in code | Expected | Phase 05 will add these during implementation |
-| 0 `Verifies:` doc comments in tests | Expected | Phase 05/07 will add these during TDD |
-| Clause references in code (13 found) | Partial | Existing stubs have clause refs; implementation will expand |
+| Item | Resolution |
+|---|---|
+| All 6 domain rows showed *Code Status: Stub* | Per-REQ status now reflects Phase 05 implementation (see tables above) |
+| 0 PRs / commits linked from matrix | Closing commit hashes now embedded per REQ |
+| 0 `Implements:` doc comments recorded | 200+ `Implements:` anchors enumerated by grep, summarized per file |
+| 0 `Verifies:` doc comments recorded | 90+ `Verifies:` anchors enumerated by grep, summarized per file |
+| StR-007 child REQ coverage low | Resolved in prior edition; 5 REQ-NF-DEPLOY (#68–#72) all implemented |
 
-### Structural Gaps (Require Action)
+### Open Gaps (require action)
 
-| Gap | Severity | Description | Action |
-|---|---|---|---|
-| StR-007 (#7) child REQ coverage | ~~Low~~ RESOLVED | ~~Production deployment had only REQ-NF-PORT-001~~ Added 5 REQ-NF-DEPLOY (#68–#72): structured logging, graceful shutdown, TOML config, systemd integration, D-Bus/socket control interface. StR-007 now has 6 child REQs | Done — issues #68–#72 created and linked |
-| REQ-F-EAP-002/003/004 verification requires FreeRADIUS | Info | EAP method integration tests need external dependency | Plan interop test infrastructure in Phase 07 |
-| REQ-NF-SEC-004 (clean-room) is manual-only | Info | Cannot be fully automated | Acknowledged; code review gate |
+| Gap | Severity | Description | Action | Tracked in |
+|---|---|---|---|---|
+| FreeRADIUS interop not yet exercised | Info | REQ-F-EAP-002/003/004 unit-implemented; cross-implementation interop blocked on external dependency | Stand up Docker-FreeRADIUS harness | `docs/TODO.md` P3.1 |
+| Clean-room verification record (REQ-NF-SEC-004) | Info | Posture present; the written audit artifact is not yet produced | Write `07-verification-validation/clean-room-review.md` | `docs/TODO.md` P3.3 |
+| CI coverage gate for REQ-NF-MNT-001 | Low | 393 tests exist; no automated `cargo llvm-cov` ≥ 80 % gate in CI | Add `cargo llvm-cov` step | `docs/TODO.md` P5.2 (security review batch) |
+| CI `cargo audit` / `cargo deny` gates | Low | Supply-chain advisories not gated automatically | Add to `.github/workflows/ci.yml` | `docs/TODO.md` P5.2 |
+| Phase-06 integration `INT-NNN` chain | Info | Per-crate REQs implemented; cross-crate wiring in `wpa-supplicant` binary still has 12 `TODO:`s | Open INT-NNN issues, drive `/tdd-compile` | `docs/TODO.md` P2.1 — P2.3 |
+| Security review of recent feature batch | Medium | `/security-review` overdue for #37, #50, #51, #59, #68–#72, #86 | Run `SKILL/prompts/security-review.prompt.md` | `docs/TODO.md` P5.1 |
 
 ## IEEE 802.1X-2020 Clause Coverage
 
-| Clause | REQ-F Coverage | Notes |
+| Clause | REQ-F Coverage | Implementation Location |
 |---|---|---|
-| Clause 8 (Supplicant PAE) | 8 REQ-F-PAE + 3 REQ-F-EAPOL + 2 REQ-NF | Full supplicant-side coverage |
-| Clause 9 (MKA) | 10 REQ-F-MKA + 1 REQ-F-EAPOL + 2 REQ-NF | Full supplicant participant coverage |
-| Clause 10 (CP) | 4 REQ-F-CP | Full supplicant-side coverage |
-| Clause 11 (EAPOL) | 4 REQ-F-EAPOL | Frame format and transport coverage |
-| Clause 12 (Logon) | 5 REQ-F-LOGON | NID selection and CAK cache |
-| Clause 6.2 (Key Hierarchy) | Covered by REQ-F-MKA-001 | KDF and key derivation |
-| EAP RFCs | 6 REQ-F-EAP | TLS, PEAP, TEAP, framework |
+| Clause 8 (Supplicant PAE) | 8 REQ-F-PAE + 3 REQ-F-EAPOL + 2 REQ-NF | `crates/eapol-supp/` |
+| Clause 9 (MKA) | 10 REQ-F-MKA + 1 REQ-F-EAPOL (MKPDU) + 2 REQ-NF | `crates/pae/src/mka.rs`, `…/mkpdu.rs`, `…/timer.rs` |
+| Clause 10 (CP) | 4 REQ-F-CP | `crates/pae/src/cp.rs` |
+| Clause 11 (EAPOL) | 4 REQ-F-EAPOL | `crates/eapol-supp/src/frame.rs`, `…/transmitter.rs`, `…/receiver.rs`, `…/announcement.rs` |
+| Clause 12 (Logon) | 5 REQ-F-LOGON | `crates/logon/`, `crates/eapol-supp/src/announcement.rs`, `…/frame.rs` |
+| Clause 6.2 (Key Hierarchy) | Covered by REQ-F-MKA-001 + REQ-F-EAP-006 | `crates/pae/src/mka.rs`, `crates/eap-peer/src/key_derivation.rs` |
+| EAP RFCs (5216, 7170, etc.) | 6 REQ-F-EAP | `crates/eap-peer/` |
 
-**All relevant supplicant clauses covered. No gaps in clause coverage.**
+**All in-scope supplicant clauses have at least one implemented crate module. No clause gaps.**

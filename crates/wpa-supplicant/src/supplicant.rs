@@ -14,11 +14,14 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use anyhow::Result;
+use eapol_supp::frame::EapolFrame;
+use eapol_supp::{PaeState, SupplicantPae};
 use pae::{CpEvent, CpState, CpStateMachine, PaeEvent};
 
 use crate::config::Config;
 use crate::control::ControlCommand;
 use crate::network_io::NetworkIo;
+use crate::pae_adapter::SupplicantPaeAdapter;
 
 /// Maximum time allowed for reconnection after link restoration.
 ///
@@ -71,8 +74,13 @@ enum ReconnectionState {
 pub struct Supplicant<N: NetworkIo> {
     /// Application configuration.
     config: Config,
-    /// Network I/O.
-    network: N,
+    /// Network I/O (shared with the Supplicant PAE adapter so both can
+    /// drive `send_eapol` / `recv_eapol` against the same underlying
+    /// L2 socket). Per INT-002 (#110) and ADR-SM-002 (#74).
+    network: Arc<N>,
+    /// Supplicant PAE state machine. Per IEEE 802.1X-2020, Clause 8.
+    /// Per INT-002 (#110).
+    pae: SupplicantPae<SupplicantPaeAdapter<N>>,
     /// CP state machine. Per IEEE 802.1X-2020, Clause 10.
     cp: CpStateMachine,
     /// Link flap reconnection state. Per REQ-NF-REL-003 (#59).
@@ -86,12 +94,25 @@ pub struct Supplicant<N: NetworkIo> {
 impl<N: NetworkIo> Supplicant<N> {
     /// Initialize the supplicant from configuration.
     ///
+    /// Accepts the network handle by value and stores it internally in an
+    /// `Arc` so it can be shared with the `SupplicantPae` adapter per
+    /// INT-002 (#110). Callers that need to retain their own reference
+    /// (e.g. integration tests inspecting `sent_frames()`) can pass an
+    /// `Arc<N>` directly thanks to the blanket
+    /// `impl<T: NetworkIo + ?Sized> NetworkIo for Arc<T>` in
+    /// `crate::network_io`.
+    ///
     /// Per ARC-C-WPA-005 (#85).
     pub fn new(config: Config, network: N) -> Result<Self> {
+        let network = Arc::new(network);
         let link_up = network.link_up();
+        let identity = config.eap.identity.as_bytes().to_vec();
+        let adapter = SupplicantPaeAdapter::new(Arc::clone(&network), identity);
+        let pae = SupplicantPae::new(adapter);
         Ok(Self {
             config,
             network,
+            pae,
             cp: CpStateMachine::new(0),
             reconnection: if link_up {
                 ReconnectionState::Idle
@@ -127,15 +148,24 @@ impl<N: NetworkIo> Supplicant<N> {
         // 2. Check for reconnection timeout
         self.check_reconnection_timeout()?;
 
-        // 3. Check for incoming EAPOL frames
-        if let Some(frame) = self.network.recv_eapol()? {
-            tracing::debug!(len = frame.len(), "received EAPOL frame");
-            // TODO: Dispatch to SupplicantPae::handle_eapol() once wired
-            let _ = frame;
+        // 3. Check for incoming EAPOL frames — per INT-002 (#110) and Cl.8.3
+        if let Some(bytes) = self.network.recv_eapol()? {
+            tracing::debug!(len = bytes.len(), "received EAPOL frame");
+            match EapolFrame::decode(&bytes) {
+                Ok(frame) => {
+                    if let Err(e) = self.pae.handle_eapol(&frame) {
+                        // Per ADR-EVT-007 (#79): a parse / state-machine error
+                        // on one frame must not abort the event loop.
+                        tracing::warn!(error = %e, "Supplicant PAE rejected EAPOL frame");
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "dropping malformed EAPOL frame");
+                }
+            }
         }
 
-        // TODO: Call step() on active state machines once wired
-        // TODO: Dispatch resulting PaeEvents
+        // TODO(INT-003 / #111): Call step() on active state machines and dispatch PaeEvents
 
         Ok(events)
     }
@@ -216,6 +246,33 @@ impl<N: NetworkIo> Supplicant<N> {
     /// Per IEEE 802.1X-2020 Clause 10 and REQ-NF-REL-003 (#59).
     pub fn cp_state(&self) -> CpState {
         self.cp.state()
+    }
+
+    /// Current Supplicant PAE state.
+    ///
+    /// Per IEEE 802.1X-2020 Clause 8.3 and INT-002 (#110).
+    pub fn pae_state(&self) -> PaeState {
+        self.pae.state()
+    }
+
+    /// Set the Supplicant PAE `authenticate` flag.
+    ///
+    /// Per IEEE 802.1X-2020 Clause 8.4: the Logon Process sets this flag
+    /// to authorize PACP to initiate an authentication attempt. Exposed
+    /// here for INT-002 (#110) end-to-end testing until the Logon Process
+    /// wiring lands (planned alongside INT-003 / #111).
+    pub fn pae_set_authenticate(&mut self, value: bool) {
+        self.pae.set_authenticate(value);
+    }
+
+    /// Diagnostic counters for the Supplicant PAE.
+    ///
+    /// Per IEEE 802.1X-2020 Clause 8.8 (`PaeCounters`) and INT-002 (#110).
+    /// `eapol_frames_rx` increments every time `handle_eapol` consumes
+    /// an inbound frame — used by integration tests to confirm the
+    /// `tick()` dispatch path is wired.
+    pub fn pae_counters(&self) -> &eapol_supp::PaeCounters {
+        self.pae.counters()
     }
 
     /// Advance CP to SECURE state (simulates successful MKA SAK installation).
@@ -322,14 +379,16 @@ impl<N: NetworkIo> Supplicant<N> {
 
     /// Get current supplicant state for the control interface.
     ///
-    /// Per ARC-C-WPA-005 (#85).
+    /// Per ARC-C-WPA-005 (#85). The `pae_state` field is sourced from the
+    /// live `SupplicantPae` per INT-002 (#110); `logon_state` and the
+    /// MKA fields will follow as their wiring lands (INT-006 / #114).
     pub fn state(&self) -> SupplicantState {
         SupplicantState {
-            pae_state: "disconnected".to_string(), // TODO: read from SupplicantPae
+            pae_state: format!("{:?}", self.pae.state()).to_lowercase(),
             cp_state: format!("{:?}", self.cp.state()).to_lowercase(),
-            logon_state: None, // TODO: read from LogonProcess
+            logon_state: None, // TODO(INT-006 / #114): read from LogonProcess
             selected_nid: None,
-            mka_established: false, // TODO: read from MkaParticipant
+            mka_established: false, // TODO(INT-006 / #114): read from MkaParticipant
             mka_live_peers: 0,
         }
     }
