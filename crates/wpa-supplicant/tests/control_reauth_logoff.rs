@@ -86,15 +86,15 @@ ca = "/etc/certs/ca.pem"
 /// Drive the supplicant's PAE through Disconnected → Connecting →
 /// Authenticating → Authenticated.
 ///
-/// Uses only the public `Supplicant` API (the thin PAE pass-through
-/// accessors `pae_set_authenticate`, `pae_step`, `pae_eap_success`).
-/// In the eventual EAP-peer wiring (a future INT-NNN), `eap_success`
-/// will be driven by the real EAP exchange; today the test exercises
-/// the same signal directly.
+/// Uses only the public `Supplicant` API. `tick()` drives
+/// `pae.step()` internally per INT-003 (#111). `pae_eap_success` is
+/// still a thin shim — the eventual EAP-peer wiring (a future INT-NNN)
+/// will drive it from the real EAP exchange.
 fn drive_to_authenticated<N: NetworkIo>(supp: &mut Supplicant<N>, net: &TestNet) -> Result<()> {
     supp.pae_set_authenticate(true);
-    // step() advances Disconnected -> Connecting and sends EAPOL-Start.
-    supp.pae_step()?;
+    // tick() advances Disconnected -> Connecting and sends EAPOL-Start
+    // per INT-003 (#111).
+    supp.tick()?;
     assert_eq!(supp.pae_state(), PaeState::Connecting);
 
     // A received EAP-Packet drives Connecting -> Authenticating.
