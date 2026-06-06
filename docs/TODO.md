@@ -33,10 +33,14 @@ Foundation work. Everything else assumes accurate status.
   - Replaced the single six-row "REQ → Code → TEST Chain" summary with seven per-domain tables (PAE / MKA / CP / Logon / EAP / EAPOL / NF) listing per REQ: issue → closing commit → implementing source files → dedicated tests → status.
   - Added Implementation Summary (16 065 LoC / 393 tests / 12 ignored perf across five crates).
   - Added four new bidirectional validation checks; rewrote Gap Analysis (5 Phase-02 gaps closed, 6 open gaps tracked 1:1 in this file).
-- [ ] **P1.2 Create `docs/PROGRESS.md`** (new file — analogous to the gate reports)
-  - Mirror the *Phase Status at a Glance* table above.
-  - Add per-domain implementation status (PAE / MKA / CP / Logon / EAP / EAPOL / wpa-supplicant binary) with closed-PR counts and remaining gaps.
-  - Link to the latest gate report for each completed phase.
+- [x] **P1.2 Create `docs/PROGRESS.md`** — landed in #108 (2026-06-06).
+  - Mirrors the *Phase Status at a Glance* table with closing-evidence and open-work columns.
+  - Per-domain implementation status for PAE / MKA / CP / Logon / EAP / wpa-supplicant binary with closing commits + test counts + open-gap pointers.
+  - Aggregate implementation summary (62/62 REQ unit-implemented or governance-satisfied; 0 in *Stub* state).
+  - Architectural anchor coverage (8 ADR / 5 ARC-C / 4 QA-SC).
+  - Cross-cutting posture snapshot (`unsafe`, `.unwrap()`, `no_std`, ARM64 build, clippy, fmt, zeroization, clause-only docs, MKA timer constants).
+  - Open-gaps table cross-references this TODO file rather than duplicating it.
+  - "How to update this file" footer for future maintainers.
 
 ---
 
@@ -106,6 +110,7 @@ Empty today. Plan, do not yet execute, until Phase 07 closes.
 
 ## Done
 
+- [x] *(2026-06-06)* **P1.2** Create `docs/PROGRESS.md` — landed in **#108**. Operator-facing roll-up: phase status, per-domain (PAE / MKA / CP / Logon / EAP / wpa-supplicant) implementation depth, aggregate summary (62/62 REQ unit-implemented or governance-satisfied), architectural anchor coverage, cross-cutting posture snapshot, open-gap pointers, maintainer footer.
 - [x] *(2026-06-06)* **P1.1** Refresh `02-requirements/traceability-matrix.md` to reflect Phase-05 implementation — landed in **#108** (commit `fa77b7f`). Per-REQ closing-commit + implementing-file + test-fn tables added across PAE / MKA / CP / Logon / EAP / EAPOL / NF; 5 Phase-02 gaps closed; 6 open gaps tracked 1:1 in this file.
 
 *(Move further completed items here with PR link, in reverse-chronological order.)*
