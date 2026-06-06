@@ -18,7 +18,7 @@ This file is a **living todo list** that combines (a) GitHub issue state, (b) ga
 | 03 Architecture | ✅ Approved | 8 ADR + 5 ARC-C + 4 QA-SC closed-approved |
 | 04 Detailed Design | ✅ Approved | `04-design/phase-gate-report.md` dated 2026-05-17 |
 | 05 Implementation | 🟡 In progress | 66 issues carry `phase:05-approved`; 12 wiring TODOs remain in `wpa-supplicant` |
-| 06 Integration | 🟢 Wiring complete — awaiting phase gate | All 9 INT-NNN landed: INT-002 (#118), INT-007 + INT-008 (#119), INT-006 (#121), INT-009 (#122), INT-003 (#123), INT-004 (#124), INT-005 (#125), INT-001 (#126). Phase-gate report and `phase:06-approved` label still pending (P2.3.1 / P2.3.2). |
+| 06 Integration | ✅ Approved 2026-06-06 | Gate report at `06-integration/phase-gate-report.md`. All 9 INT-NNN landed: INT-002 (#118), INT-007 + INT-008 (#119), INT-006 (#121), INT-009 (#122), INT-003 (#123), INT-004 (#124), INT-005 (#125), INT-001 (#126). 26 cross-crate integration tests. |
 | 07 V&V | ⬜ Not started | `07-verification-validation/` has README only |
 | 08 Transition | ⬜ Not started | `08-transition/` has README only |
 | 09 Operation & Maintenance | ⬜ Not started | `09-operation-maintenance/` has README only |
@@ -66,8 +66,8 @@ The per-crate state machines are done. Phase 06 wires them inside the `wpa-suppl
   - Each PR title format: `feat(integration): <thing> per INT-NNN (#issue)`.
 
 ### P2.3 — Close out Phase 06
-- [ ] **P2.3.1 Add `06-integration/phase-gate-report.md`** following the structure of `04-design/phase-gate-report.md` (exit criteria → status table → evidence → recommendation).
-- [ ] **P2.3.2 Run `SKILL/prompts/phase-gate-check.prompt.md`** to confirm exit criteria; on approval, apply the `phase:06-approved` label to all INT-NNN issues.
+- [x] **P2.3.1 Add `06-integration/phase-gate-report.md`** — done 2026-06-06. Follows the structure of `04-design/phase-gate-report.md`: 9 exit criteria (all met), per-INT disposition, integration quality checks, test inventory, architectural anchor coverage, APPROVED recommendation, 5 non-blocking observations, post-approval action list.
+- [x] **P2.3.2 Run `SKILL/prompts/phase-gate-check.prompt.md`** — done 2026-06-06; `phase:06-approved` label applied to all 9 INT-NNN issues (#109, #110, #111, #112, #113, #114, #115, #116, #117). Comment posted on ARC-C-WPA-005 (#85).
 
 ---
 
@@ -110,6 +110,7 @@ Empty today. Plan, do not yet execute, until Phase 07 closes.
 
 ## Done
 
+- [x] *(2026-06-06)* **P2.3.1 + P2.3.2 — Phase 06 close-out** Phase-gate report written at `06-integration/phase-gate-report.md` (APPROVED); `phase:06-approved` label applied to all 9 INT-NNN issues (#109, #110, #111, #112, #113, #114, #115, #116, #117); close-out comment posted on ARC-C-WPA-005 (#85). Phase Status row flipped to ✅ Approved. `docs/PROGRESS.md` refreshed: per-domain "Open gaps" cleared for PAE / MKA / CP / Logon; wpa-supplicant binary marked integration-complete; aggregate test count refreshed to 379 (353 unit + 26 integration); Latest Gate Reports table linked to the new report.
 - [x] *(2026-06-06)* **P2.1.1 / INT-001** Wire config-load → Supplicant construction → event loop in `main.rs` — landed in **#126** (issue **#109**). `main.rs` parses `--config <path>`, calls `Config::load`, constructs `Supplicant::with_logging` against `NoopNetworkIo`, runs the tick loop with 100ms cadence, exits cleanly on SIGTERM/SIGINT. Adds `tracing-subscriber` `fmt` feature so the binary emits to stderr. Smoke-verified: startup log → config loaded → event loop → shutdown complete.
 - [x] *(2026-06-06)* **P2.1.5 / INT-005** Forward MKA-derived SAK install events to CP — landed in **#125** (issue **#113**). `dispatch_event` rebuilds SAK from `(sak_key, sak_an)` and forwards `CpEvent::SakAvailable` per Cl.9.13 / Cl.10; all error paths downgrade to `warn!`. New `dispatch_pae_event` public test bridge.
 - [x] *(2026-06-06)* **P2.1.4 / INT-004** Reset Supplicant PAE on link-down — landed in **#124** (issue **#112**). Link-down: `pae.link_changed(false)` → PAE Disconnected + timers cancelled. Link-up: `pae.link_changed(true)` → PAE re-connects + EAPOL-Start. Skip `pae.step()` while link down. MKA-drop deferred to #113.
