@@ -205,9 +205,11 @@ impl<N: NetworkIo> Supplicant<N> {
             }
         }
 
-        // TODO(INT-005 / #113): construct an `MkaParticipant` and call
-        // its `step()` here, then forward any returned `PaeEvent`s into
+        // TODO(#129): construct an `MkaParticipant` and call its
+        // `step()` here, then forward any returned `PaeEvent`s into
         // `dispatch_event(event)` so the Cl.9 / Cl.10 path closes.
+        // Tracked as the Phase 07 prerequisite filed after Phase 06
+        // close (`06-integration/phase-gate-report.md` Observation 2).
 
         Ok(events)
     }
@@ -255,11 +257,12 @@ impl<N: NetworkIo> Supplicant<N> {
             // construction (it only mutates state); the `_` guards
             // against future signature changes.
             let _ = self.pae.link_changed(false);
-            // TODO(INT-005 / #113): when `MkaParticipant` is constructed
-            // on `Supplicant`, drop it here so its peer list, SAK, and
+            // TODO(#129): when `MkaParticipant` is constructed on
+            // `Supplicant`, drop it here so its peer list, SAK, and
             // Hello timers do not survive into the next link-up. The
             // `zeroize::Zeroize` impls already live in `pae::mka` per
-            // ADR-SEC-004 (#76).
+            // ADR-SEC-004 (#76). Tracked as the Phase 07 prerequisite
+            // filed after Phase 06 close.
         }
 
         Ok(events)
@@ -342,13 +345,13 @@ impl<N: NetworkIo> Supplicant<N> {
     /// Per IEEE 802.1X-2020 Clause 8.3. Thin pass-through to
     /// `SupplicantPae::eap_success()`.
     ///
-    /// **Integration shim — slated for removal.** In the eventual
-    /// EAP-peer wiring (a future INT-NNN that bridges `eap-peer` into
-    /// `Supplicant`), `eap_success` will be invoked by the EAP layer
-    /// when the inner method completes successfully. This public
-    /// accessor exists today only so integration tests can mock-drive
-    /// the signal — its sibling `pae_step` was already removed in
-    /// INT-003 (#111) once the tick loop drove `pae.step()` directly.
+    /// **Integration shim — slated for removal.** The EAP-peer-to-PAE
+    /// bridge (tracked as #130) will replace this with the EAP layer
+    /// invoking `eap_success` when the inner method completes
+    /// successfully. This public accessor exists today only so
+    /// integration tests can mock-drive the signal — its sibling
+    /// `pae_step` was already removed in INT-003 (#111) once the tick
+    /// loop drove `pae.step()` directly.
     ///
     /// # Errors
     /// Returns `EapolError::InvalidTransition` if the PAE is not in
