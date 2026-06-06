@@ -242,7 +242,7 @@ These can be called at ANY time, in ANY phase:
 | Actionable workflow prompts | `SKILL/prompts/` (each `.prompt.md` is invoked as a slash command) |
 | Per-phase artifacts (StR, REQ, ADR, designs, tests, …) | `0N-<phase-name>/` |
 | Latest gate report | `0N-<phase-name>/phase-gate-report.md` |
-| Workspace + crate conventions | `../CLAUDE.md` (workspace root) and `../AGENTS.md` |
+| Workspace + crate conventions | `../CLAUDE.md` and `../AGENTS.md` (project root) |
 | IEEE 802.1X-2020 standard (reference by clause only) | `../../8021X-2020.md/8021X-2020.md` |
 | Official YANG models | `../../8021X-2020.YANG/` |
 
@@ -253,7 +253,7 @@ These can be called at ANY time, in ANY phase:
 You are joining a project where Phases 01–04 are closed and Phase 05 implementation is mostly done.
 
 ```
-1.  Read CLAUDE.md (workspace root) for conventions
+1.  Read CLAUDE.md (project root) for conventions
 2.  Read docs/TODO.md for current work state
 3.  Pick the highest-priority unchecked item in TODO.md
 4.  If it's a P1 task → run /traceability-builder
