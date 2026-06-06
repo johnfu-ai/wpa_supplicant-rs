@@ -15,7 +15,7 @@ use std::time::Instant;
 
 use anyhow::Result;
 use eapol_supp::frame::EapolFrame;
-use eapol_supp::{PaeState, SupplicantPae};
+use eapol_supp::{EapolError, PaeState, SupplicantPae};
 use pae::{CpEvent, CpState, CpStateMachine, PaeEvent};
 
 use crate::config::Config;
@@ -275,6 +275,44 @@ impl<N: NetworkIo> Supplicant<N> {
         self.pae.counters()
     }
 
+    /// Drive one timer-driven step of the Supplicant PAE state machine.
+    ///
+    /// Per IEEE 802.1X-2020 Clause 8.3. Thin pass-through to
+    /// `SupplicantPae::step()`.
+    ///
+    /// **Integration shim — slated for removal.** Once INT-003 (#111) wires
+    /// the periodic `tick()` invocation of `pae.step()` and INT-005 (#113)
+    /// connects the EAP-peer crate as the higher-layer driver, this
+    /// pass-through is no longer needed at the public surface and should
+    /// be deleted. Today it lets integration tests (and INT-003 itself,
+    /// while under construction) advance the PAE through timer-driven
+    /// transitions without going through the receive path.
+    ///
+    /// # Errors
+    /// Propagates any `EapolError` returned by the underlying state machine.
+    pub fn pae_step(&mut self) -> Result<(), EapolError> {
+        self.pae.step()
+    }
+
+    /// Signal EAP-Success from the higher layer to the Supplicant PAE.
+    ///
+    /// Per IEEE 802.1X-2020 Clause 8.3. Thin pass-through to
+    /// `SupplicantPae::eap_success()`.
+    ///
+    /// **Integration shim — slated for removal.** In the eventual
+    /// EAP-peer wiring (planned alongside INT-003 / #111 and the
+    /// EAP-peer-to-PAE bridge that will be tracked when INT-003 lands),
+    /// `eap_success` will be invoked by the EAP layer when the inner
+    /// method completes successfully. This public accessor exists today
+    /// only so integration tests can mock-drive the signal.
+    ///
+    /// # Errors
+    /// Returns `EapolError::InvalidTransition` if the PAE is not in
+    /// `Authenticating` per Cl.8.3.
+    pub fn pae_eap_success(&mut self) -> Result<(), EapolError> {
+        self.pae.eap_success()
+    }
+
     /// Advance CP to SECURE state (simulates successful MKA SAK installation).
     ///
     /// In a fully wired supplicant, this would be called automatically when
@@ -395,16 +433,57 @@ impl<N: NetworkIo> Supplicant<N> {
 
     /// Handle a control command from the control interface.
     ///
-    /// Per ADR-EVT-007 (#79).
+    /// Per ADR-EVT-007 (#79). Control commands must never crash the
+    /// daemon: a state-machine rejection (e.g. reauth requested while
+    /// the PAE is Disconnected) is downgraded to a `warn!` log and the
+    /// command returns `Ok(())`.
     pub fn handle_command(&mut self, cmd: ControlCommand) -> Result<()> {
         match cmd {
             ControlCommand::Reauthenticate => {
-                tracing::info!("reauthentication requested");
-                // TODO: trigger SupplicantPae reauthentication
+                // Per IEEE 802.1X-2020 Clause 8.3 and INT-007 (#115).
+                let before = self.pae.state();
+                tracing::info!(?before, "reauthentication requested");
+                match self.pae.reauthenticate() {
+                    Ok(()) => {
+                        tracing::info!(
+                            ?before,
+                            after = ?self.pae.state(),
+                            "PAE reauthenticated per Cl.8.3"
+                        );
+                    }
+                    Err(e) => {
+                        // Per ADR-EVT-007 (#79): never crash the daemon
+                        // on a control-socket command. The audit trail
+                        // (StR-006) captures the operator action via
+                        // the warn-level log line.
+                        tracing::warn!(
+                            error = %e,
+                            ?before,
+                            "reauthenticate rejected by Supplicant PAE"
+                        );
+                    }
+                }
             }
             ControlCommand::Logoff => {
-                tracing::info!("logoff requested");
-                // TODO: trigger SupplicantPae logoff
+                // Per IEEE 802.1X-2020 Clause 8.5 and INT-008 (#116).
+                let before = self.pae.state();
+                tracing::info!(?before, "logoff requested");
+                match self.pae.logoff() {
+                    Ok(()) => {
+                        tracing::info!(
+                            ?before,
+                            after = ?self.pae.state(),
+                            "PAE entered Logoff per Cl.8.5"
+                        );
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            error = %e,
+                            ?before,
+                            "logoff rejected by Supplicant PAE"
+                        );
+                    }
+                }
             }
             ControlCommand::GetState => {
                 let state = self.state();
@@ -412,7 +491,7 @@ impl<N: NetworkIo> Supplicant<N> {
             }
             ControlCommand::SetLogLevel { level } => {
                 tracing::info!(%level, "log level change requested");
-                // TODO: implement via tracing-subscriber reload
+                // TODO(INT-009 / #117): implement via tracing-subscriber reload
             }
             ControlCommand::Shutdown => {
                 self.shutdown();
