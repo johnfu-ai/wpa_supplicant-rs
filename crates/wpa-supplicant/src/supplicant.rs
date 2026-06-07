@@ -14,15 +14,20 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use anyhow::Result;
+use eap_peer::key_derivation::derive_cak_from_msk;
 use eap_peer::peer::EapMethod;
 use eapol_supp::frame::{EapolFrame, EapolPacketType};
 use eapol_supp::{PaeState, SupplicantPae};
-use pae::{CpEvent, CpState, CpStateMachine, Msk, PaeEvent, Sak};
+use pae::{
+    AesCmacKdf, CipherSuite, CpEvent, CpState, CpStateMachine, MkaParticipant, MkaState, Msk,
+    PaeEvent, Sak, Sci,
+};
 
 use crate::config::Config;
 use crate::control::ControlCommand;
 use crate::eap_session::EapSession;
 use crate::logging::Logging;
+use crate::mka_adapter::MkaParticipantAdapter;
 use crate::network_io::NetworkIo;
 use crate::pae_adapter::SupplicantPaeAdapter;
 
@@ -30,6 +35,17 @@ use crate::pae_adapter::SupplicantPaeAdapter;
 ///
 /// Per REQ-NF-REL-003 (#59): re-establishment must complete within 10 seconds.
 pub const RECONNECTION_TIMEOUT_SECS: u64 = 10;
+
+/// Key Server priority offered by this Supplicant during MKA Key
+/// Server election per IEEE 802.1X-2020 Cl.9.5.
+///
+/// Lower-priority values win election; `0xFF` (the maximum) makes
+/// this Supplicant the *least*-preferred Key Server. In a typical
+/// deployment the Authenticator wins and distributes the SAK; the
+/// Supplicant only consumes (unwrap_sak). Surface this as a named
+/// constant so reviewers and auditors don't have to interpret a
+/// magic byte in `try_construct_mka`.
+const SUPPLICANT_KEY_SERVER_PRIORITY: u8 = 0xFF;
 
 /// Supplicant state exposed to the control interface.
 ///
@@ -74,7 +90,7 @@ enum ReconnectionState {
 /// Per ARC-C-WPA-005 (#85) and ADR-EVT-007 (#79).
 ///
 /// Implements: #59 (REQ-NF-REL-003: Reconnection After Link Flap)
-pub struct Supplicant<N: NetworkIo> {
+pub struct Supplicant<N: NetworkIo + 'static> {
     /// Application configuration.
     config: Config,
     /// Network I/O (shared with the Supplicant PAE adapter so both can
@@ -88,6 +104,12 @@ pub struct Supplicant<N: NetworkIo> {
     /// from inbound EAP packets on the wire and routes terminal
     /// `Success` / `Failure` into the PAE.
     eap: EapSession<N>,
+    /// MKA participant. `Some` once the EAP exchange has produced an
+    /// MSK (#130) and the CAK has been derived per Cl.6.2.2 (#129).
+    /// Dropped on link-down so the SAK / KEK / ICK do not survive
+    /// into the next session — `pae::mka` types are `ZeroizeOnDrop`
+    /// per ADR-SEC-004 (#76).
+    mka: Option<MkaParticipant<MkaParticipantAdapter<N>>>,
     /// CP state machine. Per IEEE 802.1X-2020, Clause 10.
     cp: CpStateMachine,
     /// Logging reload handle. `Some` when the binary entry point wired
@@ -103,7 +125,7 @@ pub struct Supplicant<N: NetworkIo> {
     shutdown: Arc<AtomicBool>,
 }
 
-impl<N: NetworkIo> Supplicant<N> {
+impl<N: NetworkIo + 'static> Supplicant<N> {
     /// Initialize the supplicant from configuration.
     ///
     /// Accepts the network handle by value and stores it internally in an
@@ -171,6 +193,7 @@ impl<N: NetworkIo> Supplicant<N> {
             network,
             pae,
             eap,
+            mka: None,
             cp: CpStateMachine::new(0),
             logging,
             reconnection: if link_up {
@@ -251,11 +274,41 @@ impl<N: NetworkIo> Supplicant<N> {
             }
         }
 
-        // TODO(#129): construct an `MkaParticipant` and call its
-        // `step()` here, then forward any returned `PaeEvent`s into
-        // `dispatch_event(event)` so the Cl.9 / Cl.10 path closes.
-        // Tracked as the Phase 07 prerequisite filed after Phase 06
-        // close (`06-integration/phase-gate-report.md` Observation 2).
+        // 5. Construct the MKA participant once the EAP-peer bridge
+        // has produced an MSK and the link is up. Per #129 and
+        // Cl.6.2.2: derive `(cak, ckn)` from the MSK via
+        // `eap_peer::key_derivation::derive_cak_from_msk` and build
+        // the participant. The bridge (#130) parks the MSK on
+        // `self.eap.pending_msk`; we consume it here destructively
+        // (Msk is not Clone per ADR-SEC-004 #76).
+        if link_up && self.mka.is_none() {
+            if let Some(msk) = self.eap.take_msk() {
+                if let Err(e) = self.try_construct_mka(msk) {
+                    tracing::warn!(error = %e, "MKA participant construction failed");
+                }
+            }
+        }
+
+        // 6. Drive the MKA participant — per #129 and Cl.9.5 / Cl.9.7.
+        // `step()` consumes Hello / Life timers and produces a vector
+        // of `PaeEvent`s (notably `MkaTransmit { mkpdu }` and
+        // `MkaSakInstalled { sak_key, sak_an }`). Forward each
+        // through `dispatch_event` so the Cl.9 / Cl.10 path closes
+        // (INT-005 #113 wired the downstream dispatch).
+        if link_up && self.mka.is_some() {
+            let mka_events = match self.mka.as_mut().expect("Some checked above").step() {
+                Ok(ev) => ev,
+                Err(e) => {
+                    tracing::warn!(error = %e, "MKA step error");
+                    Vec::new()
+                }
+            };
+            for ev in mka_events {
+                if let Err(e) = self.dispatch_event(ev) {
+                    tracing::warn!(error = %e, "MKA event dispatch error");
+                }
+            }
+        }
 
         Ok(events)
     }
@@ -303,12 +356,16 @@ impl<N: NetworkIo> Supplicant<N> {
             // construction (it only mutates state); the `_` guards
             // against future signature changes.
             let _ = self.pae.link_changed(false);
-            // TODO(#129): when `MkaParticipant` is constructed on
-            // `Supplicant`, drop it here so its peer list, SAK, and
-            // Hello timers do not survive into the next link-up. The
-            // `zeroize::Zeroize` impls already live in `pae::mka` per
-            // ADR-SEC-004 (#76). Tracked as the Phase 07 prerequisite
-            // filed after Phase 06 close.
+            // Per #129 and ADR-SEC-004 (#76): drop the MKA
+            // participant so its peer list, SAK, and Hello timers do
+            // not survive into the next link-up session. The
+            // `zeroize::Zeroize` impls on `Cak` / `Ick` / `Kek` /
+            // `Sak` (in `pae::mka`) fire on drop, zeroing the secret
+            // material per Cl.6.2.2's "stale SAK must not be reused"
+            // posture.
+            if self.mka.take().is_some() {
+                tracing::debug!("MKA participant dropped on link-down (CAK/ICK/KEK zeroized)");
+            }
         }
 
         Ok(events)
@@ -391,12 +448,14 @@ impl<N: NetworkIo> Supplicant<N> {
     /// Per RFC 5247 and IEEE 802.1X-2020 Cl.6.2.2. Returns `Some(Msk)`
     /// when the EAP peer reached `Success` and exported keying
     /// material, `None` otherwise. The MSK is held on the
-    /// [`crate::eap_session::EapSession`] until this method consumes
-    /// it; consumption is destructive (`Msk` is not `Clone`).
+    /// [`crate::eap_session::EapSession`] until consumed; consumption
+    /// is destructive (`Msk` is not `Clone`).
     ///
-    /// This is the hand-off point for the eventual MKA participant
-    /// construction (#129), which will derive the CAK from the MSK
-    /// per Cl.6.2.2.
+    /// Since #129 landed, [`Self::tick`] consumes the MSK internally
+    /// to construct the [`pae::MkaParticipant`]; in practice this
+    /// accessor returns `None` on any tick after a successful EAP
+    /// exchange. It is preserved for tests and embedders that want to
+    /// inspect the MSK before the MKA participant claims it.
     ///
     /// ## Migration note (#130)
     ///
@@ -408,6 +467,48 @@ impl<N: NetworkIo> Supplicant<N> {
     /// `tick()` route it.
     pub fn take_msk(&mut self) -> Option<Msk> {
         self.eap.take_msk()
+    }
+
+    /// Whether the MKA participant has been constructed.
+    ///
+    /// Per #129: returns `true` after a successful EAP exchange has
+    /// produced an MSK and [`Self::tick`] has derived the CAK and
+    /// initialized the participant per Cl.6.2.2. Returns `false`
+    /// before the first successful EAP exchange, and again after a
+    /// link-down event drops the participant (so SAK / KEK / ICK are
+    /// zeroized per ADR-SEC-004 #76).
+    pub fn mka_is_some(&self) -> bool {
+        self.mka.is_some()
+    }
+
+    /// Try to construct the MKA participant from a freshly-taken MSK.
+    /// Internal — `tick()` is the only caller.
+    fn try_construct_mka(&mut self, msk: Msk) -> Result<()> {
+        // Derive the CAK + CKN from the MSK per Cl.6.2.2 and
+        // ADR-KDF-008 (#80). The `derive_cak_from_msk` helper lives
+        // in `eap_peer::key_derivation` (REQ-F-EAP-006 / #43).
+        let kdf = AesCmacKdf;
+        let (cak, ckn) = derive_cak_from_msk(&kdf, &msk).map_err(anyhow::Error::from)?;
+
+        // Build the adapter (`MkaContext` impl) and the participant.
+        // Cipher suite defaults to `GcmAes128`; full mapping from
+        // `config.macsec.cipher_suite` to `pae::CipherSuite` is a
+        // small follow-up.
+        let adapter = MkaParticipantAdapter::new(Arc::clone(&self.network));
+        let sci = Sci::new(self.network.mac_address(), 1);
+        let participant = MkaParticipant::new(
+            adapter,
+            cak,
+            ckn,
+            CipherSuite::GcmAes128,
+            sci,
+            SUPPLICANT_KEY_SERVER_PRIORITY,
+        )
+        .map_err(anyhow::Error::from)?;
+
+        tracing::info!("MKA participant constructed from EAP MSK per Cl.6.2.2");
+        self.mka = Some(participant);
+        Ok(())
     }
 
     /// Drive the EAP-peer bridge with the body of an inbound EAPOL
@@ -606,15 +707,17 @@ impl<N: NetworkIo> Supplicant<N> {
     /// | `cp_state`        | `CpStateMachine::state()` — live                        | INT-002 (#110) ✅  |
     /// | `logon_state`     | `LogonProcess::state()` once constructed                | INT-001 (#109)     |
     /// | `selected_nid`    | `LogonProcess::selected_nid()` once constructed         | INT-001 (#109)     |
-    /// | `mka_established` | `MkaParticipant::state() == Established` once wired     | INT-005 (#113)     |
-    /// | `mka_live_peers`  | `MkaParticipant::live_peers().count()` once wired       | INT-005 (#113)     |
+    /// | `mka_established` | `MkaParticipant::state() == Established` (#129)         | INT-005 (#113) ✅  |
+    /// | `mka_live_peers`  | `MkaParticipant::peers().live_count()` (#129)           | INT-005 (#113) ✅  |
     ///
-    /// The Logon / MKA fields default to `None` / `false` / `0` while
-    /// those state machines are not yet plugged into `Supplicant`; when
-    /// INT-001 / INT-005 land, their populating PRs update this method
-    /// to read from the new fields. The schema is stable — control-socket
-    /// consumers (and the eventual NETCONF / YANG surface tracked under
-    /// `docs/TODO.md` P5.3) see every field on every call.
+    /// The Logon fields default to `None` while LogonProcess is not
+    /// yet plugged into `Supplicant`; when INT-001 lands, its PR
+    /// updates this method to read from the new fields. The MKA
+    /// fields default to `false` / `0` until an EAP exchange yields
+    /// an MSK and the participant is constructed (#129 path). The
+    /// schema is stable — control-socket consumers (and the eventual
+    /// NETCONF / YANG surface tracked under `docs/TODO.md` P5.3) see
+    /// every field on every call.
     pub fn state(&self) -> SupplicantState {
         SupplicantState {
             pae_state: format!("{:?}", self.pae.state()).to_lowercase(),
@@ -623,10 +726,17 @@ impl<N: NetworkIo> Supplicant<N> {
             // into `Supplicant` under INT-001 (#109).
             logon_state: None,
             selected_nid: None,
-            // Per INT-006 (#114): populated when MkaParticipant is wired
-            // into `Supplicant` under INT-005 (#113).
-            mka_established: false,
-            mka_live_peers: 0,
+            // Per #129: populated from the constructed MKA participant.
+            mka_established: self
+                .mka
+                .as_ref()
+                .map(|p| p.state() == MkaState::Established)
+                .unwrap_or(false),
+            mka_live_peers: self
+                .mka
+                .as_ref()
+                .map(|p| p.peers().live_count())
+                .unwrap_or(0),
         }
     }
 
