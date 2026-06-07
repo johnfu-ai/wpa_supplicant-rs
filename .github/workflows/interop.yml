@@ -1,0 +1,80 @@
+name: Interop (FreeRADIUS)
+
+# Phase 07 V&V — FreeRADIUS interop harness per docs/TODO.md P3.1.
+#
+# Runs the harness under `07-verification-validation/interop/`.
+# **Currently `workflow_dispatch`-only** until the FreeRADIUS
+# container config is debugged in CI (see tracking issue #138 —
+# the v3.2-alpine image exits 1 on boot with the current config
+# in the GitHub Actions sandbox; reproducible locally only).
+#
+# Once #138 closes, this workflow will be re-armed for automatic
+# runs on push/PR by reverting `on:` to the form already documented
+# in `07-verification-validation/interop/README.md`.
+
+on:
+  workflow_dispatch: {}
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  interop-freeradius:
+    name: FreeRADIUS interop
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install host tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y iproute2 openssl
+
+      - name: Build supplicant with raw-socket feature
+        run: cargo build -p wpa-supplicant --features raw-socket --release
+
+      - name: Generate throwaway cert chain
+        run: ./07-verification-validation/interop/scripts/gen-certs.sh
+
+      - name: Bring up FreeRADIUS + hostapd (with log capture on failure)
+        working-directory: 07-verification-validation/interop
+        run: |
+          docker compose up -d || {
+              echo "::error::docker compose up failed"
+              docker compose logs freeradius || true
+              docker compose logs hostapd || true
+              exit 1
+          }
+
+      - name: Run interop test (ignored — requires Docker + sudo)
+        # `sudo -E` preserves PATH so `cargo` resolves. The test
+        # itself orchestrates docker compose up/down via TeardownGuard.
+        run: |
+          sudo -E env "PATH=$PATH" cargo test \
+            -p wpa-supplicant --features raw-socket \
+            --test interop_freeradius -- --ignored --nocapture
+
+      - name: Capture container logs on failure
+        if: failure()
+        working-directory: 07-verification-validation/interop
+        run: |
+          docker compose logs freeradius > /tmp/freeradius.log || true
+          docker compose logs hostapd > /tmp/hostapd.log || true
+
+      - name: Upload diagnostic logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wpa-sup-interop-logs
+          path: |
+            /tmp/wpa-sup-interop.log
+            /tmp/freeradius.log
+            /tmp/hostapd.log
+          if-no-files-found: ignore
