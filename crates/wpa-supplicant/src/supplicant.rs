@@ -14,12 +14,14 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use anyhow::Result;
-use eapol_supp::frame::EapolFrame;
-use eapol_supp::{EapolError, PaeState, SupplicantPae};
-use pae::{CpEvent, CpState, CpStateMachine, PaeEvent, Sak};
+use eap_peer::peer::EapMethod;
+use eapol_supp::frame::{EapolFrame, EapolPacketType};
+use eapol_supp::{PaeState, SupplicantPae};
+use pae::{CpEvent, CpState, CpStateMachine, Msk, PaeEvent, Sak};
 
 use crate::config::Config;
 use crate::control::ControlCommand;
+use crate::eap_session::EapSession;
 use crate::logging::Logging;
 use crate::network_io::NetworkIo;
 use crate::pae_adapter::SupplicantPaeAdapter;
@@ -82,6 +84,10 @@ pub struct Supplicant<N: NetworkIo> {
     /// Supplicant PAE state machine. Per IEEE 802.1X-2020, Clause 8.
     /// Per INT-002 (#110).
     pae: SupplicantPae<SupplicantPaeAdapter<N>>,
+    /// EAP peer ↔ PAE bridge. Per #130: drives the EAP conversation
+    /// from inbound EAP packets on the wire and routes terminal
+    /// `Success` / `Failure` into the PAE.
+    eap: EapSession<N>,
     /// CP state machine. Per IEEE 802.1X-2020, Clause 10.
     cp: CpStateMachine,
     /// Logging reload handle. `Some` when the binary entry point wired
@@ -110,8 +116,15 @@ impl<N: NetworkIo> Supplicant<N> {
     ///
     /// Per ARC-C-WPA-005 (#85). For control-socket log-level reload
     /// support (INT-009 / #117), use [`Supplicant::with_logging`] instead.
+    ///
+    /// The EAP session is constructed with **no methods**. The peer can
+    /// still handle EAP-Identity / EAP-Notification natively and route
+    /// EAP-Success / EAP-Failure into the PAE; method-bearing methods
+    /// (EAP-TLS / PEAP / TEAP) wait on the future method-factory
+    /// follow-up that turns `EapMethodConfig` into a `Vec<Box<dyn
+    /// EapMethod>>`.
     pub fn new(config: Config, network: N) -> Result<Self> {
-        Self::build(config, network, None)
+        Self::build(config, network, None, Vec::new())
     }
 
     /// Initialize the supplicant with a [`Logging`] handle so the
@@ -121,19 +134,43 @@ impl<N: NetworkIo> Supplicant<N> {
     /// entry point calls this after `Logging::init`; tests inject a
     /// recording handle via [`Logging::from_test_handle`].
     pub fn with_logging(config: Config, network: N, logging: Logging) -> Result<Self> {
-        Self::build(config, network, Some(logging))
+        Self::build(config, network, Some(logging), Vec::new())
     }
 
-    fn build(config: Config, network: N, logging: Option<Logging>) -> Result<Self> {
+    /// Initialize the supplicant with an explicit set of EAP methods
+    /// for the bridge to dispatch to. Used by integration tests
+    /// (e.g. `tests/eap_bridge.rs`) to inject mock methods that
+    /// exercise the success / failure paths without a real TLS engine.
+    ///
+    /// Per #130. Prod callers should use [`Supplicant::new`] /
+    /// [`Supplicant::with_logging`] until the EAP method factory
+    /// (which loads PEM-based TLS engines from
+    /// `EapMethodConfig`) lands.
+    pub fn with_eap_methods(
+        config: Config,
+        network: N,
+        methods: Vec<Box<dyn EapMethod>>,
+    ) -> Result<Self> {
+        Self::build(config, network, None, methods)
+    }
+
+    fn build(
+        config: Config,
+        network: N,
+        logging: Option<Logging>,
+        eap_methods: Vec<Box<dyn EapMethod>>,
+    ) -> Result<Self> {
         let network = Arc::new(network);
         let link_up = network.link_up();
         let identity = config.eap.identity.as_bytes().to_vec();
-        let adapter = SupplicantPaeAdapter::new(Arc::clone(&network), identity);
+        let adapter = SupplicantPaeAdapter::new(Arc::clone(&network), identity.clone());
         let pae = SupplicantPae::new(adapter);
+        let eap = EapSession::new(Arc::clone(&network), identity, eap_methods);
         Ok(Self {
             config,
             network,
             pae,
+            eap,
             cp: CpStateMachine::new(0),
             logging,
             reconnection: if link_up {
@@ -179,6 +216,15 @@ impl<N: NetworkIo> Supplicant<N> {
                         // Per ADR-EVT-007 (#79): a parse / state-machine error
                         // on one frame must not abort the event loop.
                         tracing::warn!(error = %e, "Supplicant PAE rejected EAPOL frame");
+                    }
+                    // Per #130: also drive the EAP-peer bridge so an
+                    // inbound EAP packet reaches `EapPeer::handle_packet`
+                    // and any terminal Success / Failure is routed into
+                    // the PAE via `eap_success` / `eap_failure`.
+                    if frame.packet_type == EapolPacketType::EapPacket {
+                        if let Err(e) = self.drive_eap_bridge(&frame.body) {
+                            tracing::warn!(error = %e, "EAP bridge rejected packet");
+                        }
                     }
                 }
                 Err(e) => {
@@ -340,24 +386,47 @@ impl<N: NetworkIo> Supplicant<N> {
         self.pae.counters()
     }
 
-    /// Signal EAP-Success from the higher layer to the Supplicant PAE.
+    /// Take the MSK from the most recent successful EAP exchange.
     ///
-    /// Per IEEE 802.1X-2020 Clause 8.3. Thin pass-through to
-    /// `SupplicantPae::eap_success()`.
+    /// Per RFC 5247 and IEEE 802.1X-2020 Cl.6.2.2. Returns `Some(Msk)`
+    /// when the EAP peer reached `Success` and exported keying
+    /// material, `None` otherwise. The MSK is held on the
+    /// [`crate::eap_session::EapSession`] until this method consumes
+    /// it; consumption is destructive (`Msk` is not `Clone`).
     ///
-    /// **Integration shim — slated for removal.** The EAP-peer-to-PAE
-    /// bridge (tracked as #130) will replace this with the EAP layer
-    /// invoking `eap_success` when the inner method completes
-    /// successfully. This public accessor exists today only so
-    /// integration tests can mock-drive the signal — its sibling
-    /// `pae_step` was already removed in INT-003 (#111) once the tick
-    /// loop drove `pae.step()` directly.
+    /// This is the hand-off point for the eventual MKA participant
+    /// construction (#129), which will derive the CAK from the MSK
+    /// per Cl.6.2.2.
     ///
-    /// # Errors
-    /// Returns `EapolError::InvalidTransition` if the PAE is not in
-    /// `Authenticating` per Cl.8.3.
-    pub fn pae_eap_success(&mut self) -> Result<(), EapolError> {
-        self.pae.eap_success()
+    /// ## Migration note (#130)
+    ///
+    /// The previous `pae_eap_success` integration shim was removed in
+    /// #130. Inbound EAP-Success packets now reach the PAE through
+    /// the EAP-peer bridge in `tick()`; tests that previously drove
+    /// the PAE by calling `pae_eap_success` directly should instead
+    /// enqueue an EAP-Success EAPOL frame on the wire and let
+    /// `tick()` route it.
+    pub fn take_msk(&mut self) -> Option<Msk> {
+        self.eap.take_msk()
+    }
+
+    /// Drive the EAP-peer bridge with the body of an inbound EAPOL
+    /// `EapPacket` frame. Internal — `tick()` is the only caller.
+    fn drive_eap_bridge(&mut self, raw_eap: &[u8]) -> Result<()> {
+        let outcome = self.eap.handle_eap_bytes(raw_eap)?;
+        if outcome.success {
+            // PAE may be in Authenticating; downgrade an
+            // invalid-state error to `warn!` per ADR-EVT-007.
+            if let Err(e) = self.pae.eap_success() {
+                tracing::warn!(error = %e, "PAE rejected eap_success from bridge");
+            }
+        }
+        if outcome.failure {
+            if let Err(e) = self.pae.eap_failure() {
+                tracing::warn!(error = %e, "PAE rejected eap_failure from bridge");
+            }
+        }
+        Ok(())
     }
 
     /// Advance CP to SECURE state (simulates successful MKA SAK installation).

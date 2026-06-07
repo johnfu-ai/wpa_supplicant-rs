@@ -87,9 +87,9 @@ ca = "/etc/certs/ca.pem"
 /// Authenticating → Authenticated.
 ///
 /// Uses only the public `Supplicant` API. `tick()` drives
-/// `pae.step()` internally per INT-003 (#111). `pae_eap_success` is
-/// still a thin shim — the eventual EAP-peer wiring (a future INT-NNN)
-/// will drive it from the real EAP exchange.
+/// `pae.step()` internally per INT-003 (#111) and the EAP-peer bridge
+/// per #130, so EAP-Success is delivered on the wire rather than via
+/// a side-channel call.
 fn drive_to_authenticated<N: NetworkIo>(supp: &mut Supplicant<N>, net: &TestNet) -> Result<()> {
     supp.pae_set_authenticate(true);
     // tick() advances Disconnected -> Connecting and sends EAPOL-Start
@@ -97,7 +97,8 @@ fn drive_to_authenticated<N: NetworkIo>(supp: &mut Supplicant<N>, net: &TestNet)
     supp.tick()?;
     assert_eq!(supp.pae_state(), PaeState::Connecting);
 
-    // A received EAP-Packet drives Connecting -> Authenticating.
+    // A received EAP-Request/Identity drives Connecting -> Authenticating.
+    // The bridge (per #130) will also respond with an EAP-Response/Identity.
     let req = EapolFrame {
         version: EapolVersion::V3,
         packet_type: EapolPacketType::EapPacket,
@@ -107,8 +108,16 @@ fn drive_to_authenticated<N: NetworkIo>(supp: &mut Supplicant<N>, net: &TestNet)
     supp.tick()?;
     assert_eq!(supp.pae_state(), PaeState::Authenticating);
 
-    // EAP Success drives Authenticating -> Authenticated.
-    supp.pae_eap_success()?;
+    // EAP-Success on the wire drives Authenticating -> Authenticated
+    // through the bridge per #130 (replaces the legacy
+    // `pae_eap_success` shim removed in that issue).
+    let success = EapolFrame {
+        version: EapolVersion::V3,
+        packet_type: EapolPacketType::EapPacket,
+        body: vec![0x03, 0x00, 0x00, 0x04],
+    };
+    net.enqueue(success.encode().unwrap());
+    supp.tick()?;
     assert_eq!(supp.pae_state(), PaeState::Authenticated);
     Ok(())
 }

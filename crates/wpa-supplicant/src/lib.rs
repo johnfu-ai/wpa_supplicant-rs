@@ -11,6 +11,7 @@
 
 mod config;
 pub mod control;
+mod eap_session;
 mod logging;
 pub mod network_io;
 mod pae_adapter;
