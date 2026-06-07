@@ -13,6 +13,7 @@ mod config;
 pub mod control;
 mod eap_session;
 mod logging;
+mod mka_adapter;
 pub mod network_io;
 mod pae_adapter;
 #[cfg(feature = "raw-socket")]
