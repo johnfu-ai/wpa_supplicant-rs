@@ -19,6 +19,9 @@
 //! SystemRng) require the `std` feature.
 //!
 //! Implements: #61 (REQ-NF-PORT-002: no_std Capability)
+//!
+//! IMPORTANT: This implementation is based on understanding of IEEE 802.1X-2020.
+//! No copyrighted content from the standard is reproduced.
 
 #![cfg_attr(not(feature = "std"), no_std)]
 #![warn(missing_docs)]

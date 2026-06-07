@@ -5,6 +5,9 @@
 //!
 //! Implements: #25 (REQ-F-MKA-007: MKA Participant Timer Values)
 //! Implements: #61 (REQ-NF-PORT-002: no_std compatible - uses alloc::collections)
+//!
+//! IMPORTANT: This implementation is based on understanding of IEEE 802.1X-2020.
+//! No copyrighted content from the standard is reproduced.
 
 use core::time::Duration;
 

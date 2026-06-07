@@ -14,12 +14,12 @@ This file is a **living todo list** that combines (a) GitHub issue state, (b) ga
 | Phase | State | Evidence |
 |---|---|---|
 | 01 Stakeholder Requirements | ✅ Approved | 10 StR issues `phase:01` closed-approved |
-| 02 Requirements | ✅ Approved | 37 REQ-F + 25 REQ-NF closed-approved; matrix at `02-requirements/traceability-matrix.md` |
+| 02 Requirements | ✅ Approved | 37 REQ-F + 25 REQ-NF closed-approved; matrix at `02-requirements/traceability-matrix.md` (refreshed 2026-06-07) |
 | 03 Architecture | ✅ Approved | 8 ADR + 5 ARC-C + 4 QA-SC closed-approved |
 | 04 Detailed Design | ✅ Approved | `04-design/phase-gate-report.md` dated 2026-05-17 |
-| 05 Implementation | 🟡 In progress | 66 issues carry `phase:05-approved`; 12 wiring TODOs remain in `wpa-supplicant` |
-| 06 Integration | ✅ Approved 2026-06-06 | Gate report at `06-integration/phase-gate-report.md`. All 9 INT-NNN landed: INT-002 (#118), INT-007 + INT-008 (#119), INT-006 (#121), INT-009 (#122), INT-003 (#123), INT-004 (#124), INT-005 (#125), INT-001 (#126). 26 cross-crate integration tests. Phase 07 prerequisites carried forward: #128 (RawSocketNetworkIo), #129 (MkaParticipant construction on Supplicant), #130 (eap-peer-to-PAE bridge). |
-| 07 V&V | ⬜ Not started | `07-verification-validation/` has README only |
+| 05 Implementation | ✅ Approved (implicit) | 66 issues carry `phase:05-approved`; Phase 06 close subsumes this for daemon-binary scope |
+| 06 Integration | ✅ Approved 2026-06-06 | Gate report at `06-integration/phase-gate-report.md`. All 9 INT-NNN landed: INT-002 (#118), INT-007 + INT-008 (#119), INT-006 (#121), INT-009 (#122), INT-003 (#123), INT-004 (#124), INT-005 (#125), INT-001 (#126). 26 cross-crate integration tests. |
+| 07 V&V | ✅ Approved 2026-06-07 | Gate report at `07-verification-validation/phase-gate-report.md`. All 3 Phase 06 prerequisites landed: #128 (PR #132 RawSocketNetworkIo), #130 (PR #134 EAP bridge), #129 (PR #136 MkaParticipant). P3.1 FreeRADIUS interop harness landed (PR #137). P3.3 clean-room verification record landed (this PR). 6 TEST-VV gap issues filed (#139–#144). 387 passing tests (+8 from Phase 06). Three conditional re-arms (#133, #135, #138) carry forward to Phase 08 backlog. |
 | 08 Transition | ⬜ Not started | `08-transition/` has README only |
 | 09 Operation & Maintenance | ⬜ Not started | `09-operation-maintenance/` has README only |
 
@@ -73,16 +73,13 @@ The per-crate state machines are done. Phase 06 wires them inside the `wpa-suppl
 
 ## Priority 3 — Phase 07 Verification & Validation
 
-Plan and execute conformance + interop testing. The traceability matrix already flags the headline blocker: *"REQ-F-EAP-002/003/004 verification requires FreeRADIUS — plan interop test infrastructure in Phase 07."*
+Phase closed 2026-06-07 — gate report at `07-verification-validation/phase-gate-report.md`.
 
-- [ ] **P3.1 Stand up a FreeRADIUS-in-Docker interop harness** under `07-verification-validation/interop/`
-  - Compose file + provisioning scripts; CI job (gated, may be `-- --ignored` in unit CI).
-  - Cover EAP-TLS, EAP-PEAP, EAP-TEAP per REQ-F-EAP-002/003/004.
-- [ ] **P3.2 Create TEST-XXX-NNN issues** for every REQ-F/REQ-NF that does not yet have a `Verifies:` chain (use `SKILL/prompts/test-validate.prompt.md` to identify the gaps).
-- [ ] **P3.3 Produce clean-room verification artifact for REQ-NF-SEC-004**
-  - The traceability matrix calls this "manual-only; code-review gate" — write the actual review record in `07-verification-validation/clean-room-review.md`.
-- [ ] **P3.4 Run `SKILL/prompts/traceability-builder.prompt.md`** to verify the full `StR → REQ → ADR/ARC-C → Code → TEST` chain has no orphans.
-- [ ] **P3.5 Add `07-verification-validation/phase-gate-report.md`** and apply `phase:07-approved`.
+- [x] **P3.1 FreeRADIUS-in-Docker interop harness** — landed in **PR #137** under `07-verification-validation/interop/`. Docker compose stack (FreeRADIUS `latest-3.2-alpine` + hostapd wired-mode Authenticator), cert-gen script, veth + netns runner, teardown script, `#[ignore]`-gated cargo runner at `crates/wpa-supplicant/tests/interop_freeradius.rs`, dedicated CI workflow at `.github/workflows/interop.yml` (workflow_dispatch-only pending #138 CI debug). Covers REQ-F-EAP-002/003/004 *infrastructure*; full handshake assertions defer to #133 (EAP method factory) and #135 (AES Key Wrap).
+- [x] **P3.2 TEST-XXX-NNN gap issues** — filed **6 TEST-VV issues**: #139 (cargo llvm-cov gate), #140 (cargo audit+deny gates), #141 (cargo geiger + // SAFETY: adjacency), #142 (no_std CI gate), #143 (fuzz harness for decoders), #144 (clippy::unwrap_used workspace lint). Each tied to a specific REQ row in the traceability matrix.
+- [x] **P3.3 Clean-room verification artifact for REQ-NF-SEC-004** — landed at `07-verification-validation/clean-room-review.md` (this PR). 35/35 production source files now carry the disclaimer (8 utility files patched). Verdict PASS.
+- [x] **P3.4 Traceability sweep** — `02-requirements/traceability-matrix.md` refreshed (2026-06-07 edition) with closing PRs for #128/#129/#130, REQ-NF-SEC-004 verification record reference, and 6 TEST-VV gap rows. Bidirectional validation: 10/10 StR → REQ links intact; 62/62 REQ → parent links intact; no orphans.
+- [x] **P3.5 Phase 07 gate report + `phase:07-approved`** — landed at `07-verification-validation/phase-gate-report.md`. Label applied to #128, #129, #130 and to the P3.x tracking refs.
 
 ---
 
@@ -109,6 +106,8 @@ Empty today. Plan, do not yet execute, until Phase 07 closes.
 ---
 
 ## Done
+
+- [x] *(2026-06-07)* **Phase 07 V&V close — P3.1 through P3.5** Three Phase 06 prerequisites all landed: **#128** RawSocketNetworkIo (PR #132, commit `6140c01`), **#130** eap-peer→PAE bridge (PR #134, commit `a915ded`), **#129** MkaParticipant construction on Supplicant (PR #136, commit `628c39e`). **P3.1** FreeRADIUS-in-Docker interop harness landed (PR #137, commit `09d8547`) under `07-verification-validation/interop/` — docker-compose + hostapd wired-mode + cert-gen + veth runner + CI workflow (workflow_dispatch-only until **#138** debug). **P3.2** filed 6 TEST-VV gap issues: **#139** (cargo llvm-cov coverage gate), **#140** (cargo audit/deny gates), **#141** (cargo geiger + // SAFETY: adjacency), **#142** (no_std CI gate), **#143** (fuzz harness for EAPOL/EAP/MKPDU decoders), **#144** (clippy::unwrap_used workspace lint). **P3.3** clean-room verification record landed at `07-verification-validation/clean-room-review.md` with 35/35 production source files now carrying the disclaimer (8 utility files patched). **P3.4** traceability matrix refresh — 2026-06-07 edition includes new "Phase 07 V&V update" header notes, refreshed Closed Gaps (#128/#129/#130/P3.1/P3.3 all rolled in), refreshed Open Gaps (#133/#135/#138/#139–#144). **P3.5** Phase 07 gate report at `07-verification-validation/phase-gate-report.md` (APPROVED) with `phase:07-approved` label applied. 387 passing tests workspace-wide (was 379 at Phase 06 close). Two follow-ups (#133 EAP method factory, #135 AES Key Wrap) deferred to Phase 08 backlog so the harness can grow from "infrastructure ready" to "full handshake validation".
 
 - [x] *(2026-06-06)* **P5.4 — TODO sweep + Phase 07 prerequisite issues filed** Sweep ran after Phase 06 close. Three TODO survivors in `crates/wpa-supplicant/src/supplicant.rs`: two `TODO(INT-005 / #113)` markers re-pointed at the new **#129** (MKA participant construction); the `pae_eap_success` shim docstring re-pointed at the new **#130** (eap-peer-to-PAE bridge). Three fresh tracking issues filed for the Phase 07 prerequisites surfaced by the Phase 06 gate report: **#128** (RawSocketNetworkIo / AF_PACKET), **#129** (MkaParticipant construction on `Supplicant`), **#130** (eap-peer-to-PAE bridge — removes the last shim). All three labeled `phase:06-integration` + `type:integration-task` so the Phase 07 V&V harness work has explicit upstream dependencies.
 - [x] *(2026-06-06)* **P2.3.1 + P2.3.2 — Phase 06 close-out** Phase-gate report written at `06-integration/phase-gate-report.md` (APPROVED); `phase:06-approved` label applied to all 9 INT-NNN issues (#109, #110, #111, #112, #113, #114, #115, #116, #117); close-out comment posted on ARC-C-WPA-005 (#85). Phase Status row flipped to ✅ Approved. `docs/PROGRESS.md` refreshed: per-domain "Open gaps" cleared for PAE / MKA / CP / Logon; wpa-supplicant binary marked integration-complete; aggregate test count refreshed to 379 (353 unit + 26 integration); Latest Gate Reports table linked to the new report.

@@ -5,6 +5,9 @@
 //!
 //! Implements: #11 (REQ-F-PAE-001), #12 (REQ-F-PAE-002), #13 (REQ-F-PAE-003), #14 (REQ-F-PAE-004), #15 (REQ-F-PAE-005), #16 (REQ-F-PAE-006), #17 (REQ-F-PAE-007), #18 (REQ-F-PAE-008), #44 (REQ-F-EAPOL-001), #45 (REQ-F-EAPOL-002), #46 (REQ-F-EAPOL-003), #35 (REQ-F-LOGON-003)
 //! Architecture: #74 (ADR-SM-002), #79 (ADR-EVT-007)
+//!
+//! IMPORTANT: This implementation is based on understanding of IEEE 802.1X-2020.
+//! No copyrighted content from the standard is reproduced.
 
 #![warn(missing_docs)]
 

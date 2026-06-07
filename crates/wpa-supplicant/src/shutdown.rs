@@ -2,6 +2,9 @@
 //!
 //! Per REQ-NF-DEPLOY-002 (#69).
 //! Catches SIGTERM/SIGINT and sets shutdown flag within 5 seconds.
+//!
+//! IMPORTANT: This implementation is based on understanding of IEEE 802.1X-2020.
+//! No copyrighted content from the standard is reproduced.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
