@@ -2,6 +2,9 @@
 //!
 //! Per REQ-NF-DEPLOY-004 (#71).
 //! Feature-gated behind `systemd` feature flag.
+//!
+//! IMPORTANT: This implementation is based on understanding of IEEE 802.1X-2020.
+//! No copyrighted content from the standard is reproduced.
 
 use anyhow::Result;
 

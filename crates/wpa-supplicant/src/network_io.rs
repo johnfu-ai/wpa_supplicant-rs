@@ -2,6 +2,9 @@
 //!
 //! Per ADR-SM-002 (#74).
 //! Enables testability without real network interfaces.
+//!
+//! IMPORTANT: This implementation is based on understanding of IEEE 802.1X-2020.
+//! No copyrighted content from the standard is reproduced.
 
 use std::sync::Arc;
 

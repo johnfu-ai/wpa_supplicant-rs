@@ -1,7 +1,7 @@
 # Project Progress — wpa_supplicant-rs
 
-**Generated:** 2026-06-06 (refreshed after Phase 06 close)
-**Source basis:** GitHub Issues (`gh issue list`), `git log --oneline --all`, `02-requirements/traceability-matrix.md` (2026-06-06 refresh, PR #108), `06-integration/phase-gate-report.md` (Phase 06 close, 2026-06-06), `crates/*/src/**/*.rs` (`Implements:` / `Verifies:` doc-comment anchors), per-crate `cargo test` counts.
+**Generated:** 2026-06-07 (refreshed after Phase 07 V&V close)
+**Source basis:** GitHub Issues (`gh issue list`), `git log --oneline --all`, `02-requirements/traceability-matrix.md` (2026-06-07 refresh), `06-integration/phase-gate-report.md` (Phase 06 close, 2026-06-06), `07-verification-validation/phase-gate-report.md` (Phase 07 close, 2026-06-07), `crates/*/src/**/*.rs` (`Implements:` / `Verifies:` doc-comment anchors), per-crate `cargo test` counts.
 
 This file is a **living snapshot** of where the project stands across the 9-phase lifecycle and the five workspace crates. It is the operator-facing companion to `02-requirements/traceability-matrix.md` (the auditor-facing artifact) and `docs/TODO.md` (the action-item backlog).
 
@@ -14,12 +14,12 @@ This file is a **living snapshot** of where the project stands across the 9-phas
 | Phase | State | Closing Evidence | Open Work |
 |---|---|---|---|
 | 01 Stakeholder Requirements | ✅ Approved | 10 StR issues (#1–#10), `phase:01-approved` label, `01-stakeholder-requirements/phase-gate-report.md` | — |
-| 02 Requirements | ✅ Approved | 37 REQ-F + 25 REQ-NF closed-approved; matrix at `02-requirements/traceability-matrix.md` (refreshed 2026-06-06, PR #108) | — |
+| 02 Requirements | ✅ Approved | 37 REQ-F + 25 REQ-NF closed-approved; matrix at `02-requirements/traceability-matrix.md` (refreshed 2026-06-07) | — |
 | 03 Architecture | ✅ Approved | 8 ADR (#73–#80) + 5 ARC-C (#81–#85) + 4 QA-SC (#86–#89) closed-approved | — |
 | 04 Detailed Design | ✅ Approved | `04-design/phase-gate-report.md` dated 2026-05-17 | — |
 | 05 Implementation | ✅ Approved (implicit) | 66 issues with `phase:05-approved`; 353 unit tests / 16 065 LoC across 5 crates. All REQ-F + REQ-NF implemented or governance-satisfied | Per-crate gate report can be retro-fitted; the Phase 06 close subsumes the Phase 05 close for daemon-binary scope |
-| 06 Integration | ✅ Approved 2026-06-06 | All 9 INT-NNN landed (#118, #119, #121, #122, #123, #124, #125, #126). 26 new cross-crate integration tests under `crates/wpa-supplicant/tests/`. Gate report: `06-integration/phase-gate-report.md` | Real `RawSocketNetworkIo` (AF_PACKET) deferred to a Phase 07 prerequisite — `NoopNetworkIo` stub used today (see Phase 06 gate report Observation 1) |
-| 07 V&V | ⬜ Not started | `07-verification-validation/README.md` only | FreeRADIUS interop harness; TEST-XXX issues; clean-room review record; `RawSocketNetworkIo` prerequisite (`docs/TODO.md` P3.1–P3.5) |
+| 06 Integration | ✅ Approved 2026-06-06 | All 9 INT-NNN landed (#118, #119, #121, #122, #123, #124, #125, #126). 26 cross-crate integration tests. Gate report: `06-integration/phase-gate-report.md` | All 3 prerequisites (#128, #129, #130) now landed in Phase 07 |
+| 07 V&V | ✅ Approved 2026-06-07 | All 3 Phase-06 carry-forward prerequisites landed (#128 PR #132, #129 PR #136, #130 PR #134). FreeRADIUS interop harness P3.1 (PR #137). Clean-room verification record + 35/35 disclaimer coverage (P3.3). 6 TEST-VV-NNN gap issues filed (#139–#144). Gate report: `07-verification-validation/phase-gate-report.md`. **387 passing tests** (was 379 at Phase 06 close, +8). | Three conditional re-arms (#133 EAP method factory, #135 AES Key Wrap, #138 FreeRADIUS CI debug) carry forward to Phase 08 backlog |
 | 08 Transition | ⬜ Not started | `08-transition/README.md` only | Release plan + cargo publish strategy (`docs/TODO.md` P4.1) |
 | 09 Operation & Maintenance | ⬜ Not started | `09-operation-maintenance/README.md` only | Operator runbook + systemd examples (`docs/TODO.md` P4.2) |
 
@@ -49,7 +49,7 @@ The five workspace crates map onto the IEEE 802.1X-2020 protocol entities as fol
 | REQ-NF coverage | 2 / 2 | REQ-NF-PERF-001 (Hello), REQ-NF-PERF-002 (Life Time) |
 | Closing commits | `d12487a`, `2bb4179`, `2141dfd`, `7f478a4`, `7c2f118`, `b1b6b99`, `83bca6f` | |
 | Tests | 172 unit tests (8 `#[ignore]` perf) — largest crate by test count | `cargo test -p pae` |
-| Open gaps | MKA participant not yet constructed on `Supplicant` | The `MkaParticipant` requires a CAK from the EAP exchange, which in turn needs FreeRADIUS interop (Phase 07 work, `docs/TODO.md` P3.1). INT-004 (#124) + INT-005 (#125) leave the construction-site `TODO` markers and the `dispatch_pae_event` test bridge proves the downstream SAK → CP path. |
+| Open gaps | None at crate level | MKA `MkaParticipant` now constructed on `Supplicant` (#129 PR #136) — EAP→CAK→MKA→MKPDU emission validated end-to-end in `tests/mka_participant.rs`. Authenticator-side MKPDU consumption with SAK unwrap requires #135 (AES Key Wrap). |
 
 ### 3. CP (Clause 10 — Controlled Port) — `crates/pae/src/cp.rs`
 
@@ -85,11 +85,11 @@ The five workspace crates map onto the IEEE 802.1X-2020 protocol entities as fol
 
 | Aspect | Status | Evidence |
 |---|---|---|
-| Implementation | ✅ All 9 INT-NNN landed — binary runs end-to-end | Config load + event loop + signal handling (INT-001 #126); EAPOL receive + PAE dispatch (INT-002 #118); `pae.step()` driven from `tick()` (INT-003 #123); round-trip link-flap recovery (INT-004 #124); SAK → CP dispatch (INT-005 #125); live state schema (INT-006 #121); reauth / logoff commands (INT-007/008 #119); log-level reload (INT-009 #122). 26 cross-crate integration tests. |
+| Implementation | ✅ All 9 INT-NNN + 3 Phase 07 prerequisites landed — binary runs end-to-end | Phase 06 wiring (9 INT-NNN) plus Phase 07 prerequisites: `RawSocketNetworkIo` AF_PACKET backend (#128 PR #132), eap-peer→PAE bridge (#130 PR #134), `MkaParticipant` construction + state-fields wiring (#129 PR #136). |
 | REQ-NF coverage | 6 / 6 (DEPLOY + REL-003) | REQ-NF-DEPLOY-001..005, REQ-NF-REL-003 |
-| Closing commits | 8 Phase-06 PRs: #118, #119, #121, #122, #123, #124, #125, #126 | See `06-integration/phase-gate-report.md` Per-INT Disposition table for per-PR commit SHAs |
-| Tests | 46 unit + **26 integration** = 72 total (0 `#[ignore]`) | `cargo test -p wpa-supplicant` |
-| Open gaps | **RawSocketNetworkIo pending** — `NoopNetworkIo` stub in prod path until real AF_PACKET socket lands (Phase 07 prerequisite; per Phase 06 gate report Observation 1) | `MkaParticipant` not yet constructed on `Supplicant` (requires CAK from EAP exchange — Phase 07 work) |
+| Closing commits | 8 Phase-06 PRs + 3 Phase-07 prerequisites: #118, #119, #121, #122, #123, #124, #125, #126, #132, #134, #136 | See `06-integration/phase-gate-report.md` Per-INT Disposition table + `07-verification-validation/phase-gate-report.md` Per-Task Disposition table |
+| Tests | 46 unit + **34 integration** = 80 total (0 `#[ignore]`) | `cargo test -p wpa-supplicant` |
+| Open gaps | None at Phase 07 close | `RawSocketNetworkIo` real socket implemented + feature-gated. `MkaParticipant` constructed end-to-end. EAP method factory from `EapMethodConfig` (PEM TLS engine construction) tracked as #133; AES Key Wrap for `unwrap_sak` tracked as #135 — both deferred to Phase 08 follow-up. |
 
 ---
 
@@ -101,8 +101,8 @@ The five workspace crates map onto the IEEE 802.1X-2020 protocol entities as fol
 | `eapol-supp` | 2 546 | 64 | 4 | 14 (PAE + EAPOL + LOGON-003/004) | 1 (PERF-003) | Complete |
 | `eap-peer` | 3 663 | 51 | 0 | 6 (EAP) | — | Unit-complete; interop pending |
 | `logon` | 1 252 | 28 | 0 | 3 (LOGON-001/002/005) | — | Complete |
-| `wpa-supplicant` (bin) | 2 087 | 72 | 0 | — | 6 (DEPLOY + REL-003) | ✅ Integration complete |
-| **Total** | **16 065** | **379** | **12** | **37 / 37** | **25 / 25** | |
+| `wpa-supplicant` (bin) | 2 087 | 80 | 0 | — | 6 (DEPLOY + REL-003) | ✅ Phase 07 V&V complete |
+| **Total** | **16 065** | **387** | **12** | **37 / 37** | **25 / 25** | |
 
 **Implementation completeness:** 37/37 REQ-F + 25/25 REQ-NF = **62/62 (100 %)** unit-implemented or governance-satisfied.
 
@@ -125,14 +125,14 @@ The five workspace crates map onto the IEEE 802.1X-2020 protocol entities as fol
 | Phase | Report | Status |
 |---|---|---|
 | 01 Stakeholder Requirements | `01-stakeholder-requirements/phase-gate-report.md` | Approved |
-| 02 Requirements | `02-requirements/` (traceability matrix is the artifact; refreshed 2026-06-06 PR #108) | Approved |
+| 02 Requirements | `02-requirements/` (traceability matrix is the artifact; refreshed 2026-06-07) | Approved |
 | 03 Architecture | `03-architecture/phase-gate-report.md` | Approved |
 | 04 Detailed Design | `04-design/phase-gate-report.md` | Approved 2026-05-17 |
 | 05 Implementation | Implicitly closed by Phase 06 close | 66 PRs with `phase:05-approved`; daemon now boots end-to-end |
 | 06 Integration | `06-integration/phase-gate-report.md` | ✅ Approved 2026-06-06 |
-| 07 Verification & Validation | — pending — | FreeRADIUS interop harness is the next prerequisite |
-| 08 Transition | — not started — | |
-| 09 Operation & Maintenance | — not started — | |
+| 07 Verification & Validation | `07-verification-validation/phase-gate-report.md` | ✅ Approved 2026-06-07 |
+| 08 Transition | — not started — | Release plan + cargo publish strategy (`docs/TODO.md` P4.1) |
+| 09 Operation & Maintenance | — not started — | Operator runbook + systemd examples (`docs/TODO.md` P4.2) |
 
 ---
 
@@ -154,17 +154,19 @@ The five workspace crates map onto the IEEE 802.1X-2020 protocol entities as fol
 
 ## Open Gaps (Pointers, not duplicates of `docs/TODO.md`)
 
-| Gap | Severity | TODO ref |
+| Gap | Severity | Reference |
 |---|---|---|
-| `RawSocketNetworkIo` (AF_PACKET) — `NoopNetworkIo` stub still in the binary's prod path | Blocks Phase 07 interop | Phase 06 gate report Observation 1; Phase 07 prerequisite — fresh issue to be opened |
-| `MkaParticipant` construction on `Supplicant` — gated on CAK from EAP exchange | Blocks Phase 07 end-to-end | Phase 06 gate report Observation 2; Phase 07 prerequisite |
-| FreeRADIUS interop harness for REQ-F-EAP-002/003/004 | Blocks Phase 07 close | P3.1 |
-| TEST-XXX-NNN issues for uncovered REQs | Blocks Phase 07 close | P3.2 |
-| Clean-room verification record (REQ-NF-SEC-004) | Blocks Phase 07 close | P3.3 |
-| `cargo llvm-cov` ≥ 80 % CI gate (REQ-NF-MNT-001) | Low | P5.2 |
-| `cargo audit` + `cargo deny check` CI gates | Low | P5.2 |
-| Security review batch for #37, #50, #51, #59, #68–#72, #86 | Medium | P5.1 |
-| YANG management scope decision | Info | P5.3 |
+| Real EAP method construction from `EapMethodConfig` (PEM TLS engine) | Info — defers full EAP-TLS / PEAP / TEAP handshake in interop harness | #133 |
+| AES Key Wrap (RFC 3394) for MKA `unwrap_sak` | Info — defers SAK install end-to-end | #135 |
+| FreeRADIUS CI auto-trigger | Info — interop CI is `workflow_dispatch`-only until container config debug | #138 |
+| `cargo llvm-cov` ≥ 80 % CI gate (REQ-NF-MNT-001) | Low | #139 (TEST-VV-001) |
+| `cargo audit` + `cargo deny check` CI gates | Low | #140 (TEST-VV-002) |
+| `cargo geiger` + `// SAFETY:` adjacency CI gate (REQ-NF-SEC-001) | Low | #141 (TEST-VV-003) |
+| `no_std` build CI gate for `pae` (REQ-NF-PORT-002) | Low | #142 (TEST-VV-004) |
+| Fuzz harness for `EapolFrame` / `EapPacket` / `Mkpdu` decoders | Medium | #143 (TEST-VV-005) |
+| `clippy::unwrap_used` / `expect_used` workspace lint | Low | #144 (TEST-VV-006) |
+| Security review batch for #37, #50, #51, #59, #68–#72, #86 | Medium | `docs/TODO.md` P5.1 |
+| YANG management scope decision | Info | `docs/TODO.md` P5.3 |
 
 ---
 

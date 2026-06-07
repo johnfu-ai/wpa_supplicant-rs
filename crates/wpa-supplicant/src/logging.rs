@@ -3,6 +3,9 @@
 //! Per REQ-NF-DEPLOY-001 (#68) and INT-009 (#117).
 //! Uses `tracing-subscriber` with a reload handle for runtime log-level
 //! changes triggered by the control socket's `SET_LOG_LEVEL` command.
+//!
+//! IMPORTANT: This implementation is based on understanding of IEEE 802.1X-2020.
+//! No copyrighted content from the standard is reproduced.
 
 use std::sync::Arc;
 

@@ -5,6 +5,10 @@
 //! Per Clause 8.11.1 and Clause 6.2.2: EAP methods used with MKA
 //! must produce an MSK of at least 64 octets. The first 16 or 32
 //! octets of the MSK are used for CAK derivation.
+//!
+//! IMPORTANT: This implementation is based on understanding of IEEE
+//! 802.1X-2020 and RFC 5247. No copyrighted content from those
+//! documents is reproduced.
 
 use pae::{Cak, Ckn, Kdf, Msk};
 

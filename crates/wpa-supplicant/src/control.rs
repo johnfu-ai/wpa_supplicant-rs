@@ -2,6 +2,9 @@
 //!
 //! Per REQ-NF-DEPLOY-005 (#72).
 //! Supports Unix domain socket control interface.
+//!
+//! IMPORTANT: This implementation is based on understanding of IEEE 802.1X-2020.
+//! No copyrighted content from the standard is reproduced.
 
 use std::io::BufRead;
 use std::os::unix::net::{UnixListener, UnixStream};

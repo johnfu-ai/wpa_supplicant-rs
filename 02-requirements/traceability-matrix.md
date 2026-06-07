@@ -2,15 +2,24 @@
 
 ISO/IEC/IEEE 29148:2018 — Bidirectional Traceability Report
 Project: IEEE 802.1X-2020 Rust Supplicant
-Date: 2026-06-06 (refresh — Phase 05 implementation evidence rolled in per `docs/TODO.md` P1.1)
-Previous edition: 2026-05-17 (Phase 02 close — all REQs marked *Code Status: Stub*).
+Date: 2026-06-07 (Phase 07 V&V close — interop harness + clean-room review record landed)
+Previous editions: 2026-06-06 (Phase 05 implementation refresh per `docs/TODO.md` P1.1), 2026-05-17 (Phase 02 close).
 
-> **What changed in this edition.** Every row in the REQ → Code → TEST table has been
-> updated from *Stub* to reflect actual Phase-05 implementation state. Implementing
-> source files, `Implements:` / `Verifies:` doc-comment anchors, and closing commit
-> hashes are now listed per REQ. Gap analysis re-run; the FreeRADIUS interop blocker
-> for REQ-F-EAP-002/003/004 and the manual clean-room gate for REQ-NF-SEC-004 remain
-> the only known structural gaps.
+> **What changed in this edition.**
+> - Three Phase 07 prerequisites filed at Phase 06 close are now landed:
+>   #128 `RawSocketNetworkIo` (PR #132), #130 eap-peer→PAE bridge (PR #134),
+>   #129 `MkaParticipant` construction (PR #136).
+> - FreeRADIUS-in-Docker interop harness P3.1 landed (PR #137) under
+>   `07-verification-validation/interop/`.
+> - REQ-NF-SEC-004 clean-room verification record written
+>   (`07-verification-validation/clean-room-review.md`, this PR).
+> - 6 TEST-VV-NNN gap issues filed (#139–#144) covering CI-level
+>   verification gaps for REQ-NF-MNT-001, REQ-NF-SEC-001/002, REQ-NF-REL-001/002,
+>   REQ-NF-PORT-002, and supply-chain hygiene.
+> - 3 follow-up issues filed: #133 (EAP method factory), #135 (AES Key Wrap
+>   RFC 3394), #138 (FreeRADIUS CI debug). These do not block the Phase 07
+>   gate — see `07-verification-validation/phase-gate-report.md` for the
+>   APPROVED rationale and conditional re-arms.
 
 ## StR → REQ-F/REQ-NF Matrix
 
@@ -98,11 +107,11 @@ Previous edition: 2026-05-17 (Phase 02 close — all REQs marked *Code Status: S
 | REQ | Issue | Closing Commit | Code | Tests | Status |
 |---|---|---|---|---|---|
 | REQ-F-EAP-001 EAP Peer Framework | #38 | `3ef5b0b` | `crates/eap-peer/src/peer.rs`, `…/lib.rs` | 26 tests in `peer.rs` | Implemented |
-| REQ-F-EAP-002 EAP-TLS | #39 | `b39c99e` | `crates/eap-peer/src/eap_tls.rs` | 12 dedicated tests | Implemented unit; **interop pending Phase 07** (FreeRADIUS harness) |
-| REQ-F-EAP-003 PEAP | #40 | `ae0d9d2` | `crates/eap-peer/src/eap_peap.rs` | 11 dedicated tests | Implemented unit; **interop pending Phase 07** |
-| REQ-F-EAP-004 TEAP | #41 | `9af95f3` | `crates/eap-peer/src/eap_teap.rs` | 12 dedicated tests | Implemented unit; **interop pending Phase 07** |
+| REQ-F-EAP-002 EAP-TLS | #39 | `b39c99e` | `crates/eap-peer/src/eap_tls.rs` | 12 dedicated tests | Implemented unit + bridge wired (#130 PR #134); **full interop pending #133** (EAP method factory from `EapMethodConfig` + PEM) |
+| REQ-F-EAP-003 PEAP | #40 | `ae0d9d2` | `crates/eap-peer/src/eap_peap.rs` | 11 dedicated tests | Implemented unit + bridge wired (#130 PR #134); **full interop pending #133** |
+| REQ-F-EAP-004 TEAP | #41 | `9af95f3` | `crates/eap-peer/src/eap_teap.rs` | 12 dedicated tests | Implemented unit + bridge wired (#130 PR #134); **full interop pending #133** |
 | REQ-F-EAP-005 Mutual Authentication | #42 | `9a518d6` | `crates/eap-peer/src/peer.rs` | 4 dedicated tests | Implemented |
-| REQ-F-EAP-006 Key Derivation for MKA | #43 | `137f9b1` | `crates/eap-peer/src/key_derivation.rs` | 7 dedicated tests | Implemented |
+| REQ-F-EAP-006 Key Derivation for MKA | #43 | `137f9b1`, `628c39e` | `crates/eap-peer/src/key_derivation.rs`, `crates/wpa-supplicant/src/supplicant.rs::try_construct_mka` | 7 dedicated tests + integration in `tests/mka_participant.rs` | Implemented + wired end-to-end (#129 PR #136) |
 
 ### REQ-F-EAPOL (Clause 11 — EAPOL Transport)
 
@@ -130,7 +139,7 @@ Previous edition: 2026-05-17 (Phase 02 close — all REQs marked *Code Status: S
 | REQ-NF-SEC-001 No Unsafe w/o Justification | #52 | (governance) | One `unsafe { … }` in `crates/wpa-supplicant/src/systemd.rs:42` with `// SAFETY:` comment at `:40` | clippy `-D warnings`; periodic `cargo geiger` review | Implemented (1 documented `unsafe`) |
 | REQ-NF-SEC-002 No `unwrap()` in production | #53 | (governance) | Audit: 3 residual `.unwrap()` calls in non-test paths, all on demonstrably-infallible constructions; tests use `.unwrap()` freely | clippy lint; manual review | Implemented |
 | REQ-NF-SEC-003 Secret Zeroization | #54 | (governance) | `zeroize::Zeroize` applied to CAK/SAK/KEK/ICK material in `crates/pae/src/mka.rs` | review gate | Implemented |
-| REQ-NF-SEC-004 Clean-Room Compliance | #55 | (governance) | No copyrighted text reproduced; clause references only. **Phase 07 manual review record outstanding** (`docs/TODO.md` P3.3) | manual code review | Implemented; verification record pending |
+| REQ-NF-SEC-004 Clean-Room Compliance | #55 | (governance) | No copyrighted text reproduced; clause references only. **Phase 07 verification record landed at `07-verification-validation/clean-room-review.md` (this PR)** with 35/35 production source files carrying the explicit clean-room disclaimer. | manual code review | Implemented + V&V record landed |
 | REQ-NF-SEC-005 No Copyright Reproduction | #56 | (governance) | `CLAUDE.md` rule; clause-number-only doc comments verified across all 16 k LoC | manual review + grep | Implemented |
 
 ### REQ-NF (Reliability)
@@ -212,16 +221,26 @@ Previous edition: 2026-05-17 (Phase 02 close — all REQs marked *Code Status: S
 | 0 `Implements:` doc comments recorded | 200+ `Implements:` anchors enumerated by grep, summarized per file |
 | 0 `Verifies:` doc comments recorded | 90+ `Verifies:` anchors enumerated by grep, summarized per file |
 | StR-007 child REQ coverage low | Resolved in prior edition; 5 REQ-NF-DEPLOY (#68–#72) all implemented |
+| Phase 06 integration TODO markers in `wpa-supplicant` | All 9 INT-NNN landed (Phase 06 close 2026-06-06); see `06-integration/phase-gate-report.md` |
+| RawSocketNetworkIo / `NoopNetworkIo` stub in prod | #128 landed (PR #132) — real `AF_PACKET / SOCK_RAW` backend behind `raw-socket` feature |
+| MkaParticipant not constructed on Supplicant | #129 landed (PR #136) — `MkaParticipantAdapter` + lazy construction in `tick()` |
+| `pae_eap_success` integration shim still present | #130 landed (PR #134) — EAP-peer→PAE bridge replaces the shim; inbound EAP-Success packets route through `tick()` |
+| FreeRADIUS interop harness infrastructure | P3.1 landed (PR #137) — docker-compose + hostapd + cert-gen + CI workflow under `07-verification-validation/interop/` |
+| Clean-room verification record (REQ-NF-SEC-004) | This PR — `07-verification-validation/clean-room-review.md` with 35/35 disclaimer coverage |
 
 ### Open Gaps (require action)
 
 | Gap | Severity | Description | Action | Tracked in |
 |---|---|---|---|---|
-| FreeRADIUS interop not yet exercised | Info | REQ-F-EAP-002/003/004 unit-implemented; cross-implementation interop blocked on external dependency | Stand up Docker-FreeRADIUS harness | `docs/TODO.md` P3.1 |
-| Clean-room verification record (REQ-NF-SEC-004) | Info | Posture present; the written audit artifact is not yet produced | Write `07-verification-validation/clean-room-review.md` | `docs/TODO.md` P3.3 |
-| CI coverage gate for REQ-NF-MNT-001 | Low | 393 tests exist; no automated `cargo llvm-cov` ≥ 80 % gate in CI | Add `cargo llvm-cov` step | `docs/TODO.md` P5.2 (security review batch) |
-| CI `cargo audit` / `cargo deny` gates | Low | Supply-chain advisories not gated automatically | Add to `.github/workflows/ci.yml` | `docs/TODO.md` P5.2 |
-| Phase-06 integration `INT-NNN` chain | Info | Per-crate REQs implemented; cross-crate wiring in `wpa-supplicant` binary still has 12 `TODO:`s | Open INT-NNN issues, drive `/tdd-compile` | `docs/TODO.md` P2.1 — P2.3 |
+| FreeRADIUS interop *handshake* depth | Info | P3.1 harness landed (PR #137) — infra ready; full EAP-TLS / PEAP / TEAP handshake assertions require a method factory loading PEM-based TLS engines from `EapMethodConfig` | Implement #133 (EAP method factory) | #133, `docs/TODO.md` P3.1 |
+| MKA SAK install end-to-end | Info | Adapter wired (#129 PR #136); `unwrap_sak` stub returns `PaeError::CryptoError` pending AES Key Wrap (RFC 3394) | Implement #135 (AES Key Wrap) | #135 |
+| FreeRADIUS CI auto-trigger | Info | Workflow is `workflow_dispatch`-only — FreeRADIUS container exits 1 on boot in GitHub Actions sandbox; needs container-log capture to debug | Debug FreeRADIUS config | #138 |
+| CI coverage gate for REQ-NF-MNT-001 | Low | 387 tests exist; no automated `cargo llvm-cov` ≥ 80 % gate in CI | Add `cargo llvm-cov` step | #139 (TEST-VV-001), `docs/TODO.md` P5.2 |
+| CI `cargo audit` / `cargo deny` gates | Low | Supply-chain advisories not gated automatically | Add to `.github/workflows/ci.yml` | #140 (TEST-VV-002), `docs/TODO.md` P5.2 |
+| CI `cargo geiger` gate for REQ-NF-SEC-001 | Low | `unsafe` block count tracked manually | Add geiger + grep-based `// SAFETY:` adjacency check | #141 (TEST-VV-003) |
+| CI `no_std` build gate for REQ-NF-PORT-002 | Low | `pae --no-default-features` builds locally; no CI step | Add to `.github/workflows/ci.yml` | #142 (TEST-VV-004) |
+| Fuzz harness for REQ-NF-REL-001/002 | Medium | Three decoders (`EapolFrame`, `EapPacket`, `Mkpdu`) have no fuzz coverage | Add `cargo fuzz` targets | #143 (TEST-VV-005) |
+| `clippy::unwrap_used` not enabled | Low | 3 documented residuals; new `.unwrap()` not gated | Enable clippy lint workspace-wide | #144 (TEST-VV-006) |
 | Security review of recent feature batch | Medium | `/security-review` overdue for #37, #50, #51, #59, #68–#72, #86 | Run `SKILL/prompts/security-review.prompt.md` | `docs/TODO.md` P5.1 |
 
 ## IEEE 802.1X-2020 Clause Coverage
