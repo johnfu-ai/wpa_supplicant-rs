@@ -10,10 +10,16 @@
 //! No copyrighted content from the standard is reproduced.
 
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
-use wpa_supplicant::{Config, Logging, NoopNetworkIo, ShutdownHandler, Supplicant};
+use wpa_supplicant::{Config, Logging, NetworkIo, ShutdownHandler, Supplicant};
+
+#[cfg(not(feature = "raw-socket"))]
+use wpa_supplicant::NoopNetworkIo;
+#[cfg(feature = "raw-socket")]
+use wpa_supplicant::RawSocketNetworkIo;
 
 /// Default path for the configuration file.
 pub const DEFAULT_CONFIG_PATH: &str = "/etc/wpa_supplicant-rs.toml";
@@ -49,9 +55,14 @@ fn main() {
     );
 
     // --- Network I/O ---
-    // INT-001 (#109) uses the `NoopNetworkIo` stub. A real L2 raw-socket
-    // binding (`RawSocketNetworkIo`) is tracked as a Phase-06 follow-up.
-    let network = NoopNetworkIo::new([0x02, 0x00, 0x00, 0x00, 0x00, 0x00], true);
+    // Per #128: the `raw-socket` feature picks the real `AF_PACKET / SOCK_RAW`
+    // backend; without it, the daemon still assembles end-to-end against the
+    // `NoopNetworkIo` stub (acceptance criterion for INT-001 / #109). Both
+    // backends are erased to `Arc<dyn NetworkIo>` so `Supplicant` instantiates
+    // the same monomorphization either way — the blanket
+    // `impl<T: NetworkIo + ?Sized> NetworkIo for Arc<T>` (network_io.rs:33)
+    // makes this transparent.
+    let network: Arc<dyn NetworkIo> = build_network(&config);
 
     // --- Supplicant construction with logging handle ---
     let mut supp = match Supplicant::with_logging(config, network, logging) {
@@ -87,6 +98,51 @@ fn main() {
     }
 
     tracing::info!("shutdown complete");
+}
+
+/// Construct the `NetworkIo` backend chosen at compile time.
+///
+/// * With `--features raw-socket`: a real `AF_PACKET / SOCK_RAW` socket bound
+///   to `config.interface`. A `CAP_NET_RAW` failure surfaces here as a clear
+///   `tracing::error!` plus non-zero exit, per the #128 acceptance criteria.
+/// * Without the feature: a [`NoopNetworkIo`] stub that discards every
+///   outbound frame — preserved so the daemon still assembles end-to-end on
+///   hosts without `CAP_NET_RAW` (the INT-001 / #109 acceptance shape).
+#[cfg(feature = "raw-socket")]
+fn build_network(config: &Config) -> Arc<dyn NetworkIo> {
+    match RawSocketNetworkIo::bind(&config.interface) {
+        Ok(io) => {
+            tracing::info!(
+                interface = %config.interface,
+                backend = "raw-socket",
+                "network I/O bound"
+            );
+            Arc::new(io)
+        }
+        Err(e) => {
+            tracing::error!(
+                error = %e,
+                interface = %config.interface,
+                "failed to bind AF_PACKET socket — likely missing CAP_NET_RAW. \
+                 Run as root or grant the capability with `setcap cap_net_raw+ep`."
+            );
+            std::process::exit(1);
+        }
+    }
+}
+
+#[cfg(not(feature = "raw-socket"))]
+fn build_network(config: &Config) -> Arc<dyn NetworkIo> {
+    tracing::warn!(
+        interface = %config.interface,
+        backend = "noop",
+        "no `raw-socket` feature compiled in — using `NoopNetworkIo` stub; \
+         the daemon will not exchange frames with peers"
+    );
+    Arc::new(NoopNetworkIo::new(
+        [0x02, 0x00, 0x00, 0x00, 0x00, 0x00],
+        true,
+    ))
 }
 
 /// Parse the `--config` argument from CLI args, or get the default path.

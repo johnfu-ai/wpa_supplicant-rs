@@ -14,6 +14,8 @@ pub mod control;
 mod logging;
 pub mod network_io;
 mod pae_adapter;
+#[cfg(feature = "raw-socket")]
+mod raw_socket;
 mod shutdown;
 mod supplicant;
 #[cfg(feature = "systemd")]
@@ -27,6 +29,8 @@ pub use control::{ControlCommand, ControlInterface};
 pub use logging::Logging;
 pub use network_io::{NetworkIo, NoopNetworkIo};
 pub use pae_adapter::SupplicantPaeAdapter;
+#[cfg(feature = "raw-socket")]
+pub use raw_socket::RawSocketNetworkIo;
 pub use shutdown::ShutdownHandler;
 pub use supplicant::{Supplicant, SupplicantState};
 

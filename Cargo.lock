@@ -864,6 +864,7 @@ dependencies = [
  "anyhow",
  "eap-peer",
  "eapol-supp",
+ "libc",
  "logon",
  "pae",
  "serde",

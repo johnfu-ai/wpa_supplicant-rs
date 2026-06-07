@@ -18,3 +18,7 @@ rust-version = "1.75"
 tracing = "0.1"
 thiserror = "2"
 zeroize = { version = "1", features = ["derive"] }
+# Optional low-level dep used by `wpa-supplicant`'s `raw-socket` feature
+# for `AF_PACKET / SOCK_RAW` binding per #128. Kept opt-in so the workspace
+# does not pull `libc` transitively into crates that don't touch the kernel.
+libc = "0.2"
