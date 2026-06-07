@@ -18,10 +18,17 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 signal-hook = "0.3"
 toml = "0.8"
+# Pulled in only by the `raw-socket` feature for `AF_PACKET` binding (#128).
+libc = { workspace = true, optional = true }
 
 [features]
 default = []
 systemd = []
+# Real `AF_PACKET / SOCK_RAW` `NetworkIo` backed by `libc`. Off by default
+# so the daemon still builds + runs against the `NoopNetworkIo` stub when
+# the kernel I/O surface is not wanted (e.g. on macOS dev hosts or in
+# sandboxed CI without `CAP_NET_RAW`). Phase 07 prerequisite — see #128.
+raw-socket = ["dep:libc"]
 
 [dev-dependencies]
 tempfile = "3"
