@@ -12,7 +12,7 @@
 services:
 
   freeradius:
-    image: freeradius/freeradius-server:3.2-alpine
+    image: freeradius/freeradius-server:latest-3.2-alpine
     container_name: wpa-sup-freeradius
     ports:
       - "1812:1812/udp"   # RADIUS auth

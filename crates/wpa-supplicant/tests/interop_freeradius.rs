@@ -118,6 +118,11 @@ fn interop_freeradius_smoke() {
         "scripts/gen-certs.sh must succeed"
     );
 
+    // Install the teardown guard **before** we touch docker so a
+    // failed `up -d` still cleans the network namespace + veth pair
+    // and any partially-started containers.
+    let _guard = TeardownGuard;
+
     // Bring up FreeRADIUS + hostapd. `up -d` returns once the stack
     // is started; we then poll for healthy.
     assert!(
@@ -143,9 +148,6 @@ fn interop_freeradius_smoke() {
         }
         std::thread::sleep(Duration::from_secs(1));
     }
-
-    // Always tear down, even on assertion failure further down.
-    let _guard = TeardownGuard;
 
     assert!(healthy, "FreeRADIUS must become healthy within 30 s");
 
