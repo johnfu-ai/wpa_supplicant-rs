@@ -1,0 +1,9 @@
+# Test users for the interop harness.
+#
+# alice@example.com authenticates via EAP-TLS (certificate CN).
+# The password line is a PEAP/MSCHAPv2 fallback when tunneled.
+
+"alice@example.com"  Cleartext-Password := "test-password"
+                     Tunnel-Type = 0,
+                     Tunnel-Medium-Type = 0,
+                     Tunnel-Private-Group-Id = "1"

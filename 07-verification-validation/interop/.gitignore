@@ -1,0 +1,13 @@
+# Generated cert chain — regenerated per harness run by
+# scripts/gen-certs.sh. Throwaway material; do not commit.
+certs/*.pem
+certs/*.key
+certs/*.csr
+certs/*.srl
+freeradius/certs/*.pem
+freeradius/certs/*.key
+freeradius/certs/*.csr
+freeradius/certs/*.srl
+
+# Generated supplicant config for runner scripts.
+supplicant.toml

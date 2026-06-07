@@ -1,0 +1,70 @@
+name: Interop (FreeRADIUS)
+
+# Phase 07 V&V — FreeRADIUS interop harness per docs/TODO.md P3.1.
+#
+# Runs the harness under `07-verification-validation/interop/` on
+# every push to main and on PRs that touch interop-relevant paths.
+# Skipped on doc-only changes.
+#
+# The unit-test CI in `.github/workflows/ci.yml` stays fast (~1 min);
+# this job is allowed to take longer (~5 min) because it pulls Docker
+# images, generates a cert chain, and exercises the binary end-to-end.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'crates/**'
+      - '07-verification-validation/interop/**'
+      - '.github/workflows/interop.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'crates/**'
+      - '07-verification-validation/interop/**'
+      - '.github/workflows/interop.yml'
+  workflow_dispatch: {}
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  interop-freeradius:
+    name: FreeRADIUS interop
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install host tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y iproute2 openssl
+
+      - name: Build supplicant with raw-socket feature
+        run: cargo build -p wpa-supplicant --features raw-socket --release
+
+      - name: Generate throwaway cert chain
+        run: ./07-verification-validation/interop/scripts/gen-certs.sh
+
+      - name: Run interop test (ignored — requires Docker + sudo)
+        # `sudo -E` preserves PATH so `cargo` resolves. The test
+        # itself orchestrates docker compose up/down via TeardownGuard.
+        run: |
+          sudo -E env "PATH=$PATH" cargo test \
+            -p wpa-supplicant --features raw-socket \
+            --test interop_freeradius -- --ignored --nocapture
+
+      - name: Upload supplicant log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wpa-sup-interop-log
+          path: /tmp/wpa-sup-interop.log
+          if-no-files-found: ignore
