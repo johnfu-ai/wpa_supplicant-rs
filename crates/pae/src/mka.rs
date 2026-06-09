@@ -21,6 +21,8 @@ use alloc::vec;
 #[cfg(not(feature = "std"))]
 use alloc::vec::Vec;
 
+#[cfg(all(feature = "std", test))]
+use crate::crypto::{compute_icv, verify_icv};
 #[cfg(feature = "std")]
 use cmac::{Cmac, Mac};
 #[cfg(feature = "std")]
@@ -261,9 +263,9 @@ impl Kek {
     }
 
     /// Key bytes as a slice (for key wrap operations).
-    /// Used by REQ-F-MKA-007 (SAK wrap/unwrap) for key encryption.
-    #[allow(dead_code)]
-    pub(crate) fn as_bytes(&self) -> &[u8] {
+    /// Public because the KEK-based wrap/unwrap path requires raw KEK
+    /// bytes per REQ-F-MKA-007 (#24).
+    pub fn as_bytes(&self) -> &[u8] {
         &self.key[..self.len]
     }
 }
@@ -336,10 +338,10 @@ impl Sak {
         self.len == 0
     }
 
-    /// Key bytes as a slice (internal use only).
-    /// Used by REQ-F-MKA-007 (SAK wrap/unwrap) for key encryption.
-    #[allow(dead_code)]
-    pub(crate) fn as_bytes(&self) -> &[u8] {
+    /// Key bytes as a slice (for key wrap operations).
+    /// Public because the KEK-based wrap/unwrap path requires raw SAK
+    /// bytes per REQ-F-MKA-007 (#24).
+    pub fn as_bytes(&self) -> &[u8] {
         &self.key[..self.len]
     }
 }
@@ -881,77 +883,6 @@ pub trait MkaContext: Send + Sync {
     fn send_mkpdu(&self, frame: &[u8]) -> Result<(), crate::PaeError>;
 }
 
-/// Compute ICV for MKPDU content using AES-CMAC-128 with the ICK.
-///
-/// Per IEEE 802.1X-2020, Clause 9.7: the ICV is computed over all
-/// parameter sets in the MKPDU except the ICV parameter set itself.
-///
-/// Implements: #20 (REQ-F-MKA-002: MKA Transport)
-///
-/// Only available with the `std` feature (requires AES-CMAC crypto crates).
-///
-/// # Errors
-/// Returns `PaeError::CryptoError` if CMAC computation fails.
-#[cfg(feature = "std")]
-pub fn compute_icv(payload: &[u8], ick: &Ick) -> Result<[u8; 16], crate::PaeError> {
-    match ick.len() {
-        16 => {
-            let mut cmac =
-                <Cmac<aes::Aes128> as KeyInit>::new_from_slice(ick.as_bytes()).map_err(|e| {
-                    crate::PaeError::CryptoError(format!("AES-128-CMAC key init failed: {}", e))
-                })?;
-            cmac.update(payload);
-            let result = cmac.finalize().into_bytes();
-            let mut icv = [0u8; 16];
-            icv.copy_from_slice(&result);
-            Ok(icv)
-        }
-        32 => {
-            let mut cmac =
-                <Cmac<aes::Aes256> as KeyInit>::new_from_slice(ick.as_bytes()).map_err(|e| {
-                    crate::PaeError::CryptoError(format!("AES-256-CMAC key init failed: {}", e))
-                })?;
-            cmac.update(payload);
-            let result = cmac.finalize().into_bytes();
-            let mut icv = [0u8; 16];
-            icv.copy_from_slice(&result);
-            Ok(icv)
-        }
-        _ => Err(crate::PaeError::CryptoError(format!(
-            "unsupported ICK length: {}",
-            ick.len()
-        ))),
-    }
-}
-
-/// Verify ICV using constant-time comparison.
-///
-/// Per IEEE 802.1X-2020, Clause 9.7.
-/// Implements: #20 (REQ-F-MKA-002: MKA Transport)
-///
-/// Only available with the `std` feature (requires AES-CMAC crypto crates).
-///
-/// # Errors
-/// Returns `PaeError::IcvFailed` if the ICV does not match.
-#[cfg(feature = "std")]
-pub fn verify_icv(
-    payload: &[u8],
-    expected_icv: &[u8; 16],
-    ick: &Ick,
-) -> Result<(), crate::PaeError> {
-    let computed = compute_icv(payload, ick)?;
-    // Constant-time comparison to prevent timing attacks
-    let mut diff = 0u8;
-    for (a, b) in computed.iter().zip(expected_icv.iter()) {
-        diff |= a ^ b;
-    }
-    if diff == 0 {
-        Ok(())
-    } else {
-        Err(crate::PaeError::IcvFailed)
-    }
-}
-
 /// MKA Participant — the Aggregate root for an MKA session.
 ///
 /// Per IEEE 802.1X-2020, Clause 9.
@@ -1073,6 +1004,13 @@ impl<C: MkaContext> MkaParticipant<C> {
     /// Current SAK, if installed.
     pub fn sak(&self) -> Option<&Sak> {
         self.sak.as_ref()
+    }
+
+    /// KEK for this session (used for SAK wrap/unwrap per Cl.9.8).
+    ///
+    /// Implements: #24 (REQ-F-MKA-006: SAK Reception/Installation)
+    pub fn kek(&self) -> &Kek {
+        &self.kek
     }
 
     /// CKN for this session.
@@ -2240,20 +2178,15 @@ mod tests {
             Sak::from_bytes(&key, 0).map_err(|e| crate::PaeError::KeyError(e.to_string()))
         }
 
-        fn wrap_sak(&self, sak: &Sak, _kek: &Kek) -> Result<Vec<u8>, crate::PaeError> {
-            // Mock: just return the SAK bytes with a header
-            let mut wrapped = vec![0x01]; // mock header
-            wrapped.extend_from_slice(sak.as_bytes());
-            Ok(wrapped)
+        fn wrap_sak(&self, sak: &Sak, kek: &Kek) -> Result<Vec<u8>, crate::PaeError> {
+            // Real AES Key Wrap per RFC 3394 / Cl.9.8.
+            crate::crypto::aes_key_wrap(sak.as_bytes(), kek.as_bytes())
         }
 
-        fn unwrap_sak(&self, wrapped: &[u8], _kek: &Kek, an: u8) -> Result<Sak, crate::PaeError> {
-            // Mock: skip the 1-byte header and extract SAK
-            if wrapped.len() < 2 {
-                return Err(crate::PaeError::CryptoError("wrapped SAK too short".into()));
-            }
-            Sak::from_bytes(&wrapped[1..], an)
-                .map_err(|e| crate::PaeError::CryptoError(e.to_string()))
+        fn unwrap_sak(&self, wrapped: &[u8], kek: &Kek, an: u8) -> Result<Sak, crate::PaeError> {
+            // Real AES Key Unwrap per RFC 3394 / Cl.9.8.
+            let plaintext = crate::crypto::aes_key_unwrap(wrapped, kek.as_bytes())?;
+            Sak::from_bytes(&plaintext, an).map_err(|e| crate::PaeError::CryptoError(e.to_string()))
         }
 
         fn compute_icv(&self, payload: &[u8], ick: &Ick) -> Result<[u8; 16], crate::PaeError> {
@@ -2892,15 +2825,18 @@ mod tests {
 
     /// Verifies: #24 (REQ-F-MKA-006)
     /// Per IEEE 802.1X-2020, Clause 9.8.
-    /// install_sak unwraps and installs a received SAK.
+    /// install_sak unwraps and installs a received SAK using real AES Key
+    /// Wrap (RFC 3394) via the mock context.
     #[test]
     fn test_mka_participant_install_sak() {
         let mut p = make_participant();
         assert!(p.sak().is_none());
 
-        // Create a mock wrapped SAK (1-byte header + 16 key bytes)
-        let mut wrapped = vec![0x01];
-        wrapped.extend_from_slice(&[0xAB; 16]);
+        // Create a SAK and wrap it with the participant's KEK using real
+        // AES Key Wrap per RFC 3394 / Cl.9.8.
+        let sak_key = [0xAB_u8; 16];
+        let wrapped =
+            crate::crypto::aes_key_wrap(&sak_key, p.kek.as_bytes()).expect("wrap should succeed");
 
         let sak = p
             .install_sak(&wrapped, 1)
@@ -2915,12 +2851,19 @@ mod tests {
 
     /// Verifies: #24 (REQ-F-MKA-006)
     /// Per IEEE 802.1X-2020, Clause 9.8.
-    /// install_sak fails with invalid wrapped data.
+    /// install_sak fails with invalid wrapped data (garbage that fails the
+    /// RFC 3394 IV check).
     #[test]
     fn test_mka_participant_install_sak_invalid() {
         let mut p = make_participant();
-        let result = p.install_sak(&[0x01], 0); // too short
+        // Garbage data — too short for RFC 3394 (min 24 bytes)
+        let result = p.install_sak(&[0x01], 0);
         assert!(result.is_err(), "install_sak must fail with invalid data");
+
+        // Data that's long enough but has wrong IV
+        let garbage = [0xFF_u8; 24];
+        let result2 = p.install_sak(&garbage, 0);
+        assert!(result2.is_err(), "install_sak must fail with wrong IV");
     }
 
     // --- REQ-F-MKA-008: MKA Participant Creation/Deletion ---

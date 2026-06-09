@@ -44,6 +44,10 @@ pub mod port;
 /// Protocol timer wheel per ADR-TMR-003 (#75).
 pub mod timer;
 
+/// AES crypto primitives per RFC 3394 and IEEE 802.1X-2020.
+#[cfg(feature = "std")]
+pub mod crypto;
+
 /// Core error type for PAE operations.
 ///
 /// Per ADR-ERR-005 (#77).
@@ -107,13 +111,15 @@ impl core::fmt::Display for PaeError {
 
 // Re-export key types for convenience
 pub use cp::{CpEvent, CpState, CpStateMachine, CpTransition, SecureAssociation, SecureChannel};
+#[cfg(feature = "std")]
+pub use crypto::{aes_key_unwrap, aes_key_wrap, compute_icv, verify_icv};
 pub use mka::{
     common_cipher_suite, elect_key_server, Cak, CipherSuite, Ckn, Ick, Kdf, Kek, KeyServerRole,
     MkaContext, MkaParticipant, MkaPeer, MkaPeerList, MkaPeerStatus, MkaState, Msk, PaeEvent, Rng,
     Sak, Sci,
 };
 #[cfg(feature = "std")]
-pub use mka::{compute_icv, verify_icv, AesCmacKdf, CakEntry, CakStore, SystemRng};
+pub use mka::{AesCmacKdf, CakEntry, CakStore, SystemRng};
 pub use mkpdu::{
     BasicParameterSet, DistribSakParameterSet, Mkpdu, ParameterSet, PeerEntry, SakUseParameterSet,
     ICV_LEN, MKPDU_VERSION,
