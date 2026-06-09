@@ -33,13 +33,11 @@
 //!   Actor-by-default with low priority; in practice the Authenticator
 //!   wins Key Server election (Cl.9.5) and these are never reached.
 //!   They return `PaeError::NotKeyServer` to make a wrong call loud
-//!   rather than silently producing garbage keys.
-//! * `unwrap_sak` — required for the Supplicant to consume the
-//!   Authenticator's distributed SAK. Real AES Key Wrap (RFC 3394)
-//!   is tracked as **#135** (filed by this PR). Until that lands the
-//!   stub returns `PaeError::CryptoError` so the SAK distribution
-//!   path surfaces as a logged error rather than a silent install of
-//!   wrong bytes.
+//!   rather than silently producing garbage keys. This is **by design**
+//!   per the Supplicant-only scope of this implementation.
+//! * `unwrap_sak` — uses real AES Key Wrap (RFC 3394) via
+//!   `pae::aes_key_unwrap` to extract the distributed SAK from the
+//!   Key Server's Distribute SAK parameter set per Cl.9.8.
 //!
 //! IMPORTANT: This implementation is based on understanding of IEEE
 //! 802.1X-2020. No copyrighted content from the standard is reproduced.
@@ -87,25 +85,28 @@ impl<N: NetworkIo + Send + Sync + 'static> MkaContext for MkaParticipantAdapter<
     }
 
     fn generate_sak(&self, _cipher_suite: CipherSuite) -> Result<Sak, PaeError> {
-        // Supplicant role does not generate SAKs — the elected Key
-        // Server (typically the Authenticator) does. Return a hard
-        // error rather than fabricate bytes; the MKA state machine
-        // never calls this unless its key-server election is wrong.
+        // Per IEEE 802.1X-2020 Cl.9.5 / Cl.9.8: the Supplicant role
+        // never generates SAKs — only the elected Key Server does.
+        // This method returns `NotKeyServer` to make an incorrect call
+        // site loud rather than silently producing invalid keys. This is
+        // **by design** per the Supplicant-only scope of this
+        // implementation.
         Err(PaeError::NotKeyServer)
     }
 
     fn wrap_sak(&self, _sak: &Sak, _kek: &Kek) -> Result<Vec<u8>, PaeError> {
-        // See `generate_sak` — Supplicant role never wraps SAKs.
+        // Per IEEE 802.1X-2020 Cl.9.8: the Supplicant role never wraps
+        // SAKs — only the Key Server distributes wrapped SAKs. This
+        // method returns `NotKeyServer` by design per Cl.9.5.
         Err(PaeError::NotKeyServer)
     }
 
-    fn unwrap_sak(&self, _wrapped: &[u8], _kek: &Kek, _an: u8) -> Result<Sak, PaeError> {
-        // Real AES Key Wrap (RFC 3394) unwrap is tracked as #135.
-        // Until that lands, return CryptoError so the distribution
-        // path is loud rather than silently installing wrong bytes.
-        Err(PaeError::CryptoError(
-            "AES Key Wrap unwrap not yet implemented — tracked as #135".into(),
-        ))
+    fn unwrap_sak(&self, wrapped: &[u8], kek: &Kek, an: u8) -> Result<Sak, PaeError> {
+        // Per IEEE 802.1X-2020 Cl.9.8: unwrap the SAK using AES Key
+        // Wrap (RFC 3394) with the KEK derived from the CAK per Cl.9.6.
+        let plaintext = pae::aes_key_unwrap(wrapped, kek.as_bytes())?;
+        Sak::from_bytes(&plaintext, an)
+            .map_err(|e| PaeError::CryptoError(format!("unwrapped SAK invalid: {}", e)))
     }
 
     fn compute_icv(&self, payload: &[u8], ick: &Ick) -> Result<[u8; 16], PaeError> {
