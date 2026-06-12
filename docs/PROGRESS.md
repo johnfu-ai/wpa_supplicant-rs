@@ -49,7 +49,7 @@ The five workspace crates map onto the IEEE 802.1X-2020 protocol entities as fol
 | REQ-NF coverage | 2 / 2 | REQ-NF-PERF-001 (Hello), REQ-NF-PERF-002 (Life Time) |
 | Closing commits | `d12487a`, `2bb4179`, `2141dfd`, `7f478a4`, `7c2f118`, `b1b6b99`, `83bca6f` | |
 | Tests | 172 unit tests (8 `#[ignore]` perf) — largest crate by test count | `cargo test -p pae` |
-| Open gaps | None at crate level | MKA `MkaParticipant` now constructed on `Supplicant` (#129 PR #136) — EAP→CAK→MKA→MKPDU emission validated end-to-end in `tests/mka_participant.rs`. Authenticator-side MKPDU consumption with SAK unwrap requires #135 (AES Key Wrap). |
+| Open gaps | None at crate level | MKA `MkaParticipant` now constructed on `Supplicant` (#129 PR #136) — EAP→CAK→MKA→MKPDU emission validated end-to-end in `tests/mka_participant.rs`. AES Key Wrap (RFC 3394) for SAK unwrap landed in PR #146 (#135) — `aes_key_wrap_sak.rs` integration test exercises the full wrapped-SAK MKPDU → unwrap → CP→Secured path. |
 
 ### 3. CP (Clause 10 — Controlled Port) — `crates/pae/src/cp.rs`
 
@@ -89,7 +89,7 @@ The five workspace crates map onto the IEEE 802.1X-2020 protocol entities as fol
 | REQ-NF coverage | 6 / 6 (DEPLOY + REL-003) | REQ-NF-DEPLOY-001..005, REQ-NF-REL-003 |
 | Closing commits | 8 Phase-06 PRs + 3 Phase-07 prerequisites: #118, #119, #121, #122, #123, #124, #125, #126, #132, #134, #136 | See `06-integration/phase-gate-report.md` Per-INT Disposition table + `07-verification-validation/phase-gate-report.md` Per-Task Disposition table |
 | Tests | 46 unit + **34 integration** = 80 total (0 `#[ignore]`) | `cargo test -p wpa-supplicant` |
-| Open gaps | None at Phase 07 close | `RawSocketNetworkIo` real socket implemented + feature-gated. `MkaParticipant` constructed end-to-end. EAP method factory from `EapMethodConfig` (PEM TLS engine construction) tracked as #133; AES Key Wrap for `unwrap_sak` tracked as #135 — both deferred to Phase 08 follow-up. |
+| Open gaps | None at Phase 07 close | `RawSocketNetworkIo` real socket implemented + feature-gated. `MkaParticipant` constructed end-to-end. AES Key Wrap (RFC 3394) for `unwrap_sak` landed in PR #146 (#135). EAP method factory from `EapMethodConfig` (PEM TLS engine construction) tracked as #133 — deferred to Phase 08 follow-up. |
 
 ---
 
@@ -157,7 +157,6 @@ The five workspace crates map onto the IEEE 802.1X-2020 protocol entities as fol
 | Gap | Severity | Reference |
 |---|---|---|
 | Real EAP method construction from `EapMethodConfig` (PEM TLS engine) | Info — defers full EAP-TLS / PEAP / TEAP handshake in interop harness | #133 |
-| AES Key Wrap (RFC 3394) for MKA `unwrap_sak` | Info — defers SAK install end-to-end | #135 |
 | FreeRADIUS CI auto-trigger | Info — interop CI is `workflow_dispatch`-only until container config debug | #138 |
 | `cargo llvm-cov` ≥ 80 % CI gate (REQ-NF-MNT-001) | Low | #139 (TEST-VV-001) |
 | `cargo audit` + `cargo deny check` CI gates | Low | #140 (TEST-VV-002) |

@@ -1,14 +1,15 @@
 //! FreeRADIUS-in-Docker interop harness driver, callable from `cargo test`.
 //!
 //! Implements: `docs/TODO.md` P3.1. Covers REQ-F-EAP-002 / REQ-F-EAP-003 /
-//! REQ-F-EAP-004 once the EAP method factory (#133) and AES Key Wrap
-//! (#135) follow-ups land. Today this test asserts the harness
-//! infrastructure (docker-compose, certs, veth setup, binary boot)
-//! works end-to-end; the *full* EAP-TLS / PEAP / TEAP handshake
-//! assertion is deferred behind a `// TODO(#133)` marker.
+//! REQ-F-EAP-004 once the EAP method factory (#133) follow-up lands.
+//! AES Key Wrap (RFC 3394) for MKA SAK unwrap landed in PR #146 (#135).
+//! Today this test asserts the harness infrastructure (docker-compose,
+//! certs, veth setup, binary boot) works end-to-end; the *full* EAP-TLS /
+//! PEAP / TEAP handshake assertion is deferred behind a `// TODO(#133)`
+//! marker.
 //!
 //! Verifies: `docs/TODO.md` P3.1 (harness today); REQ-F-EAP-002 /
-//! REQ-F-EAP-003 / REQ-F-EAP-004 once #133 + #135 land.
+//! REQ-F-EAP-003 / REQ-F-EAP-004 once #133 lands.
 //!
 //! ## Why `#[ignore]`
 //!
@@ -90,11 +91,11 @@ fn docker_compose(args: &[&str]) -> std::process::ExitStatus {
 /// 5. Tear down.
 ///
 /// Once #133 lands (real EAP method factory from `EapMethodConfig`),
-/// this test grows assertions on the full EAP-TLS handshake. Once
-/// #135 lands (AES Key Wrap), it grows assertions on the SAK install
-/// path. Until then it pins the *infrastructure* contract — the
-/// stack composes, the certs validate, the veth wiring works, and
-/// the binary reaches `event loop started`.
+/// this test grows assertions on the full EAP-TLS handshake and SAK
+/// install path (AES Key Wrap landed in PR #146 / #135 — `unwrap_sak`
+/// is no longer stubbed). Until #133 lands, this pins the
+/// *infrastructure* contract — the stack composes, the certs validate,
+/// the veth wiring works, and the binary reaches `event loop started`.
 #[test]
 #[ignore = "requires Docker + sudo + openssl; run via `sudo -E cargo test \
             -p wpa-supplicant --features raw-socket --test interop_freeradius \
@@ -161,11 +162,10 @@ fn interop_freeradius_smoke() {
 
     // TODO(#133): once the EAP method factory lands, parse the
     // supplicant log for an EAP-Success event and assert PAE reached
-    // Authenticated against the real RADIUS server.
-    //
-    // TODO(#135): once AES Key Wrap lands in `MkaParticipantAdapter::unwrap_sak`,
-    // assert that hostapd's MKA install (if hostapd ever gains it for
-    // wired mode) drives CP -> Secured.
+    // Authenticated against the real RADIUS server. AES Key Wrap
+    // (`unwrap_sak`) landed in PR #146 (#135), so the same test can
+    // also assert that an authenticator-distributed SAK drives
+    // CP -> Secured (if hostapd ever gains MKA for wired mode).
 }
 
 /// RAII guard that always tears down the harness on test exit,
