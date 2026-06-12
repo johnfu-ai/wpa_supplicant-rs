@@ -93,7 +93,7 @@ on every push to `main`. The job is gated on the `interop` label
 
 ⚠️ **Full EAP-TLS / PEAP / TEAP handshake validation** requires the EAP method factory tracked as **#133** ("load EAP methods from `EapMethodConfig` — PEM-based TLS engine construction"). Until that lands, the integration test asserts only the Identity exchange + EAPOL-Logoff round-trip. A `// TODO(#133):` marker in `tests/interop_freeradius.rs` will be lifted to a real EAP-TLS handshake assertion once that issue closes.
 
-⚠️ **MACsec / SAK install validation** requires AES Key Wrap (RFC 3394) in `MkaParticipantAdapter::unwrap_sak` — tracked as **#135**. The harness will exercise the MKA construction (#129) and assert at least one EAPOL-MKA frame is sent, but cannot validate the SAK install path end-to-end until #135 closes.
+✅ **AES Key Wrap (RFC 3394)** for `MkaParticipantAdapter::unwrap_sak` landed in PR #146 (closes **#135**). End-to-end SAK install (wrapped-SAK MKPDU → unwrap → CP→Secured) is independently exercised by `crates/wpa-supplicant/tests/aes_key_wrap_sak.rs`. The interop harness can grow assertions on the wire-side path once an authenticator that distributes SAKs in wired mode is available (hostapd does not today); for now the SAK install assertion lives in the in-process integration test.
 
 This is **expected scope for P3.1's first cut.** The harness infrastructure (compose, certs, veth setup, runner, CI hook) is the deliverable; the actual handshake validation depths land issue-by-issue.
 
@@ -102,4 +102,4 @@ This is **expected scope for P3.1's first cut.** The harness infrastructure (com
 * `docs/TODO.md` P3.1
 * REQ-F-EAP-002 / REQ-F-EAP-003 / REQ-F-EAP-004 (`02-requirements/traceability-matrix.md`)
 * Depends on: #128 (RawSocketNetworkIo, landed PR #132), #129 (MkaParticipant, landed PR #136), #130 (eap-peer→PAE bridge, landed PR #134)
-* Blocks on for full validation: #133 (EAP method factory), #135 (AES Key Wrap)
+* Blocks on for full validation: #133 (EAP method factory). AES Key Wrap (#135) landed in PR #146 — closed.

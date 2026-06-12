@@ -233,7 +233,7 @@ Previous editions: 2026-06-06 (Phase 05 implementation refresh per `docs/TODO.md
 | Gap | Severity | Description | Action | Tracked in |
 |---|---|---|---|---|
 | FreeRADIUS interop *handshake* depth | Info | P3.1 harness landed (PR #137) — infra ready; full EAP-TLS / PEAP / TEAP handshake assertions require a method factory loading PEM-based TLS engines from `EapMethodConfig` | Implement #133 (EAP method factory) | #133, `docs/TODO.md` P3.1 |
-| MKA SAK install end-to-end | Info | Adapter wired (#129 PR #136); `unwrap_sak` stub returns `PaeError::CryptoError` pending AES Key Wrap (RFC 3394) | Implement #135 (AES Key Wrap) | #135 |
+| MKA SAK install end-to-end | Closed | Adapter wired (#129 PR #136); AES Key Wrap (RFC 3394) for `unwrap_sak` landed in PR #146 (#135). End-to-end wrapped-SAK MKPDU → unwrap → CP→Secured covered by `crates/wpa-supplicant/tests/aes_key_wrap_sak.rs`. | (closed) | #135, PR #146 |
 | FreeRADIUS CI auto-trigger | Info | Workflow is `workflow_dispatch`-only — FreeRADIUS container exits 1 on boot in GitHub Actions sandbox; needs container-log capture to debug | Debug FreeRADIUS config | #138 |
 | CI coverage gate for REQ-NF-MNT-001 | Low | 387 tests exist; no automated `cargo llvm-cov` ≥ 80 % gate in CI | Add `cargo llvm-cov` step | #139 (TEST-VV-001), `docs/TODO.md` P5.2 |
 | CI `cargo audit` / `cargo deny` gates | Low | Supply-chain advisories not gated automatically | Add to `.github/workflows/ci.yml` | #140 (TEST-VV-002), `docs/TODO.md` P5.2 |
