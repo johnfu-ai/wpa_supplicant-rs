@@ -250,7 +250,7 @@ impl<N: NetworkIo + Send + Sync> EapContext for EapContextImpl<N> {
 fn empty_tls_config() -> TlsClientConfig {
     TlsClientConfig {
         cert_chain: Vec::new(),
-        private_key: Vec::new(),
+        private_key: zeroize::Zeroizing::new(Vec::new()),
         ca_certs: Vec::new(),
         verify_server: true,
     }

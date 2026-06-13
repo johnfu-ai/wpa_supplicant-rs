@@ -10,6 +10,9 @@ rust-version.workspace = true
 pae = { path = "../pae" }
 tracing.workspace = true
 thiserror.workspace = true
+# Used for `Zeroizing<Vec<u8>>` on TLS private-key bytes per ADR-SEC-004
+# (#76) — see security-review F-04 (#152).
+zeroize.workspace = true
 
 [features]
 default = ["eap-tls"]

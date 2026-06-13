@@ -404,7 +404,7 @@ mod tests {
                 identity: b"testuser".to_vec(),
                 tls_config: TlsClientConfig {
                     cert_chain: Vec::new(),
-                    private_key: Vec::new(),
+                    private_key: zeroize::Zeroizing::new(Vec::new()),
                     ca_certs: vec![b"ca".to_vec()],
                     verify_server: true,
                 },
