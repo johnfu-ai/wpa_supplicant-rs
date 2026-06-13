@@ -95,7 +95,7 @@ Empty today. Plan, do not yet execute, until Phase 07 closes.
 
 ## Priority 5 — Cross-cutting hygiene (do whenever it fits)
 
-- [ ] **P5.1 Run `SKILL/prompts/security-review.prompt.md`** over the recent feature batch (#37, #50, #51, #59, #68, #69, #70, #71, #72, #86) — overdue per `CLAUDE.md` workflow rule *"After implementing features, perform a security review."*
+- [x] **P5.1 Run `SKILL/prompts/security-review.prompt.md`** over the recent feature batch (#37, #50, #51, #59, #68, #69, #70, #71, #72, #86) — **done 2026-06-13**. Report at `07-verification-validation/security-review-2026-06-13.md`. **0 Critical, 0 High, 4 Medium (F-01/02 control-socket → #150, F-03 PSK redact → #151, F-04 TLS private_key zeroize → #152), 2 Low (F-05 constant-time IV → #153, F-06 LISTEN_PID validation → #154), 2 Info (F-08 → #133 comment, F-09 MN wrap → #155).** No blockers for Phase 08 entry; all findings tracked as separate issues.
 - [ ] **P5.2 Add `cargo audit` + `cargo deny check` to CI** (`.github/workflows/ci.yml`).
 - [ ] **P5.3 Decide YANG management scope** — the `8021X-2020.YANG/` sibling repo is checked in but no Rust code consumes it. Either:
   - (a) Open `ADR-MGMT-009: NETCONF/YANG management surface` via `SKILL/prompts/architecture-starter.prompt.md`, or
@@ -106,6 +106,8 @@ Empty today. Plan, do not yet execute, until Phase 07 closes.
 ---
 
 ## Done
+
+- [x] *(2026-06-13)* **P5.1 — Security review sweep** Report landed at `07-verification-validation/security-review-2026-06-13.md`. Scope: recent feature batch + the latest landings (#128 RawSocketNetworkIo, #129 MkaParticipant, #130 EAP→PAE bridge, #135 AES Key Wrap). Verdict: **0 Critical, 0 High, 4 Medium, 2 Low, 2 Info — no Phase-08-blocking findings.** Mitigations filed as separate tracking issues: control-socket chmod + DoS hardening (#150, F-01/F-02), MacsecConfig::psk redact + zeroize (#151, F-03), TlsClientConfig::private_key zeroize (#152, F-04), constant-time IV check in AES Key Unwrap (#153, F-05), systemd LISTEN_PID validation (#154, F-06), MKA MN wrap policy (#155, F-09). F-08 (TLS engine verify_server escape hatch) folded into #133 as a carry-forward security comment. Items confirmed clean: 18 unsafe blocks in raw_socket.rs all have SAFETY comments; production unwrap() count remains 3 (all infallible Mutex::lock); MKA secret types redact + ZeroizeOnDrop; EAPOL/MKPDU/EAP decoders bounds-check before allocation; AES Key Wrap matches RFC 3394 §4.1/§4.3/§4.6 vectors with full intermediate-state zeroize; cargo audit 0 vulnerabilities; cargo deny (with PR #148's deny.toml) all four facets ok.
 
 - [x] *(2026-06-13)* **P5.5 — `cargo test --workspace -- --ignored` passes** Verified 2026-06-13 on x86_64 Linux (WSL2). All **12 ignored wall-clock perf tests** green: 4 in `eapol-supp::supplicant_pae::tests` (EAPOL response latency single + 95th percentile, step-bounded execution, handle-eapol-bounded execution), 8 in `pae` (CP transition latency + 95th + recompute, MKA transition latency + 95th + expire-bounded + hello-under-load, timer advance-bounded). REQ-NF-PERF-001 / 002 / 003 / 004 perf invariants hold; the `#[ignore]`-gated suite remains the canonical perf check (per commit `a90c033`).
 
