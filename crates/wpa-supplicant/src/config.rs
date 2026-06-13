@@ -7,6 +7,55 @@
 //! IMPORTANT: This implementation is based on understanding of IEEE 802.1X-2020.
 //! No copyrighted content from the standard is reproduced.
 
+/// Pre-shared CAK in TOML configuration.
+///
+/// Newtype wrapper around the hex-encoded PSK string so that:
+/// 1. The `Debug` impl emits `Psk("[REDACTED]")` instead of the raw hex —
+///    if a future log site adds `tracing::debug!(?config)` (a common
+///    debug pattern), the root key does not leak. Verified by
+///    `test_psk_debug_is_redacted` below.
+/// 2. The underlying `String` is wrapped in `zeroize::Zeroizing` so the
+///    backing allocation is scrubbed on drop (and on every clone's drop
+///    too).
+///
+/// Per ADR-SEC-004 (#76), REQ-NF-SEC-003 (#54), and security-review F-03 (#151).
+#[derive(Clone)]
+pub struct Psk(zeroize::Zeroizing<String>);
+
+impl Psk {
+    /// Borrow the hex string. The returned `&str` lives no longer than
+    /// `&self`, so callers cannot stash it past the `Psk`'s drop.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Debug for Psk {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("Psk").field(&"[REDACTED]").finish()
+    }
+}
+
+impl From<String> for Psk {
+    fn from(s: String) -> Self {
+        Self(zeroize::Zeroizing::new(s))
+    }
+}
+
+// Custom serde deserialiser — `Zeroizing<String>` does not derive
+// `Deserialize`, so we deserialise to a temporary `String` and wrap.
+// The temporary's allocation goes via `From<String>` directly into the
+// `Zeroizing` wrapper; no plaintext copy survives this function.
+impl<'de> serde::Deserialize<'de> for Psk {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        Ok(Self::from(s))
+    }
+}
+
 /// EAP authentication configuration.
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct EapConfig {
@@ -67,8 +116,10 @@ pub struct MacsecConfig {
     #[serde(default = "default_hello_time")]
     pub hello_time: f64,
 
-    /// Pre-shared CAK (hex-encoded, optional).
-    pub psk: Option<String>,
+    /// Pre-shared CAK (hex-encoded, optional). Wrapped in [`Psk`] so the
+    /// hex bytes are zeroized on drop and redacted from `Debug` output —
+    /// see ADR-SEC-004 (#76) and security-review F-03 (#151).
+    pub psk: Option<Psk>,
 }
 
 impl Default for MacsecConfig {
@@ -239,6 +290,79 @@ impl Config {
 mod tests {
     use super::*;
 
+    /// Verifies: ADR-SEC-004 (#76), security-review F-03 (#151).
+    ///
+    /// `Psk`'s `Debug` emits `[REDACTED]`, never the underlying hex.
+    /// This guards against any future log site adding `tracing::debug!(?config)`
+    /// or similar — the root key must not appear in the rendered output.
+    #[test]
+    fn test_psk_debug_is_redacted() {
+        let psk = Psk::from("deadbeefcafebabe0102030405060708".to_string());
+        let rendered = format!("{:?}", psk);
+        assert!(
+            !rendered.contains("deadbeef"),
+            "Psk Debug must not contain the hex; got {rendered:?}",
+        );
+        assert!(
+            rendered.contains("[REDACTED]"),
+            "Psk Debug must contain [REDACTED]; got {rendered:?}",
+        );
+    }
+
+    /// Verifies: ADR-SEC-004 (#76), security-review F-03 (#151).
+    ///
+    /// Debug-formatting an entire `Config` whose `MacsecConfig.psk` is
+    /// `Some(...)` does not leak the hex. This is the realistic
+    /// foot-gun the F-03 finding called out — a future
+    /// `tracing::debug!(?config)` somewhere in the loader would have
+    /// silently dumped the CAK before this fix.
+    #[test]
+    fn test_config_debug_does_not_leak_psk() {
+        let toml = r#"
+interface = "eth0"
+
+[eap]
+identity = "alice@example.com"
+
+[eap.method]
+type = "tls"
+cert = "/etc/wpa-supplicant/client.pem"
+key = "/etc/wpa-supplicant/client.key"
+ca = "/etc/wpa-supplicant/ca.pem"
+
+[macsec]
+enabled = true
+cipher_suite = "gcm-aes-128"
+hello_time = 2.0
+psk = "deadbeefcafebabe0102030405060708"
+"#;
+        let config = Config::from_toml(toml).expect("must parse");
+        let rendered = format!("{:?}", config);
+        assert!(
+            !rendered.contains("deadbeef"),
+            "Config Debug must not leak the PSK hex; got {rendered:?}",
+        );
+        assert!(
+            rendered.contains("[REDACTED]"),
+            "Config Debug must propagate Psk's [REDACTED] marker; got {rendered:?}",
+        );
+    }
+
+    /// Verifies: ADR-SEC-004 (#76), security-review F-03 (#151).
+    ///
+    /// `Psk` carries `Zeroizing<String>` internally; cloning preserves
+    /// the wrapper so a clone also zeroizes on drop. Type-asserts the
+    /// internal field type so any future change dropping the wrapper
+    /// fails to compile.
+    #[test]
+    fn test_psk_inner_is_zeroizing() {
+        let psk = Psk::from("hex_bytes".to_string());
+        let cloned = psk.clone();
+        // Type-assert the inner allocation is wrapped in Zeroizing.
+        let _: &zeroize::Zeroizing<String> = &cloned.0;
+        assert_eq!(cloned.as_str(), "hex_bytes");
+    }
+
     /// Verifies: #70 (REQ-NF-DEPLOY-003)
     /// AC1: Load minimal valid TOML config with required fields.
     #[test]
@@ -311,7 +435,7 @@ socket_path = "/run/wpa-supply.sock"
         assert_eq!(config.macsec.cipher_suite, "gcm-aes-256");
         assert!((config.macsec.hello_time - 1.0).abs() < f64::EPSILON);
         assert_eq!(
-            config.macsec.psk.as_deref(),
+            config.macsec.psk.as_ref().map(|p| p.as_str()),
             Some("0102030405060708090a0b0c0d0e0f10")
         );
         assert!(config.logon.enabled);
