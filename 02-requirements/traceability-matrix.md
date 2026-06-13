@@ -138,7 +138,7 @@ Previous editions: 2026-06-06 (Phase 05 implementation refresh per `docs/TODO.md
 |---|---|---|---|---|---|
 | REQ-NF-SEC-001 No Unsafe w/o Justification | #52 | (governance) | One `unsafe { … }` in `crates/wpa-supplicant/src/systemd.rs:42` with `// SAFETY:` comment at `:40` | clippy `-D warnings`; periodic `cargo geiger` review | Implemented (1 documented `unsafe`) |
 | REQ-NF-SEC-002 No `unwrap()` in production | #53 | (governance) | Audit: 3 residual `.unwrap()` calls in non-test paths, all on demonstrably-infallible constructions; tests use `.unwrap()` freely | clippy lint; manual review | Implemented |
-| REQ-NF-SEC-003 Secret Zeroization | #54 | (governance) | `zeroize::Zeroize` applied to CAK/SAK/KEK/ICK material in `crates/pae/src/mka.rs` | review gate | Implemented |
+| REQ-NF-SEC-003 Secret Zeroization | #54 | (governance) | `zeroize::Zeroize` applied to CAK/SAK/KEK/ICK material in `crates/pae/src/mka.rs`; `Zeroizing<Vec<u8>>` on `TlsClientConfig::private_key` in `crates/eap-peer/src/peer.rs` (#152) | review gate | Implemented |
 | REQ-NF-SEC-004 Clean-Room Compliance | #55 | (governance) | No copyrighted text reproduced; clause references only. **Phase 07 verification record landed at `07-verification-validation/clean-room-review.md` (this PR)** with 35/35 production source files carrying the explicit clean-room disclaimer. | manual code review | Implemented + V&V record landed |
 | REQ-NF-SEC-005 No Copyright Reproduction | #56 | (governance) | `CLAUDE.md` rule; clause-number-only doc comments verified across all 16 k LoC | manual review + grep | Implemented |
 

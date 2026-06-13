@@ -25,6 +25,9 @@ signal-hook = "0.3"
 toml = "0.8"
 # Pulled in only by the `raw-socket` feature for `AF_PACKET` binding (#128).
 libc = { workspace = true, optional = true }
+# Used to construct `zeroize::Zeroizing<Vec<u8>>` for TLS private keys
+# in the empty-config builder per ADR-SEC-004 (#76) / security-review F-04 (#152).
+zeroize.workspace = true
 
 [features]
 default = []

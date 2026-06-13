@@ -312,12 +312,17 @@ impl EapPacket {
 ///
 /// Anti-corruption layer: EAP methods use this; PAE core never sees TLS internals.
 /// Per ADR-FF-006 (#78).
+///
+/// `private_key` is wrapped in [`zeroize::Zeroizing`] so the PEM bytes are
+/// scrubbed when the struct (or any clone) drops, per ADR-SEC-004 (#76)
+/// and security-review F-04 (#152). `cert_chain` and `ca_certs` are
+/// public certificate material and are not zeroized.
 pub struct TlsClientConfig {
     /// Client certificate chain (PEM bytes).
     pub cert_chain: Vec<Vec<u8>>,
-    /// Client private key (PEM bytes).
-    /// Not redacted in Debug to avoid credential leakage.
-    pub private_key: Vec<u8>,
+    /// Client private key (PEM bytes). Zeroized on drop.
+    /// Redacted in Debug to avoid credential leakage.
+    pub private_key: zeroize::Zeroizing<Vec<u8>>,
     /// Trusted CA certificates (PEM bytes).
     pub ca_certs: Vec<Vec<u8>>,
     /// Whether to verify server certificate.
@@ -641,7 +646,7 @@ mod tests {
                 identity: identity.to_vec(),
                 tls_config: TlsClientConfig {
                     cert_chain: Vec::new(),
-                    private_key: Vec::new(),
+                    private_key: zeroize::Zeroizing::new(Vec::new()),
                     ca_certs: Vec::new(),
                     verify_server: true,
                 },
@@ -1159,7 +1164,7 @@ mod tests {
     fn test_tls_client_config() {
         let config = TlsClientConfig {
             cert_chain: vec![b"cert".to_vec()],
-            private_key: b"secret_key".to_vec(),
+            private_key: zeroize::Zeroizing::new(b"secret_key".to_vec()),
             ca_certs: vec![b"ca".to_vec()],
             verify_server: true,
         };
@@ -1170,6 +1175,35 @@ mod tests {
         let debug_str = format!("{:?}", config);
         assert!(!debug_str.contains("secret_key"));
         assert!(debug_str.contains("[REDACTED]"));
+    }
+
+    /// Verifies: ADR-SEC-004 (#76), security-review F-04 (#152).
+    ///
+    /// `TlsClientConfig::private_key` is `Zeroizing<Vec<u8>>`, so the
+    /// PEM bytes are scrubbed when the config (or any clone of it)
+    /// drops. We can't observe the post-drop memory directly from safe
+    /// Rust, so the test verifies the *type contract* — the field is
+    /// `Zeroizing` (which is `ZeroizeOnDrop` by construction) — by
+    /// type-checking an explicit assignment. If a future change drops
+    /// the wrapper, this test fails to compile.
+    #[test]
+    fn test_tls_private_key_is_zeroizing() {
+        let key: zeroize::Zeroizing<Vec<u8>> = zeroize::Zeroizing::new(b"k".to_vec());
+        let config = TlsClientConfig {
+            cert_chain: Vec::new(),
+            private_key: key, // type-asserts that the field accepts Zeroizing<Vec<u8>>.
+            ca_certs: Vec::new(),
+            verify_server: true,
+        };
+        // Cloning preserves the type: a clone of Zeroizing<Vec<u8>> is
+        // also Zeroizing<Vec<u8>>, not a plain Vec<u8> that would
+        // sidestep the zeroize-on-drop guarantee.
+        let cloned = config.clone();
+        let _: &zeroize::Zeroizing<Vec<u8>> = &cloned.private_key;
+        // Deref to &[u8] still works through Zeroizing — callers reading
+        // the bytes need no API change.
+        let bytes: &[u8] = &cloned.private_key;
+        assert_eq!(bytes, b"k");
     }
 
     /// Verifies: SEC-EAP-002
