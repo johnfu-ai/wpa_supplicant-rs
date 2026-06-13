@@ -236,7 +236,7 @@ Previous editions: 2026-06-06 (Phase 05 implementation refresh per `docs/TODO.md
 | MKA SAK install end-to-end | Closed | Adapter wired (#129 PR #136); AES Key Wrap (RFC 3394) for `unwrap_sak` landed in PR #146 (#135). End-to-end wrapped-SAK MKPDU → unwrap → CP→Secured covered by `crates/wpa-supplicant/tests/aes_key_wrap_sak.rs`. | (closed) | #135, PR #146 |
 | FreeRADIUS CI auto-trigger | Info | Workflow is `workflow_dispatch`-only — FreeRADIUS container exits 1 on boot in GitHub Actions sandbox; needs container-log capture to debug | Debug FreeRADIUS config | #138 |
 | CI coverage gate for REQ-NF-MNT-001 | Low | 387 tests exist; no automated `cargo llvm-cov` ≥ 80 % gate in CI | Add `cargo llvm-cov` step | #139 (TEST-VV-001), `docs/TODO.md` P5.2 |
-| CI `cargo audit` / `cargo deny` gates | Low | Supply-chain advisories not gated automatically | Add to `.github/workflows/ci.yml` | #140 (TEST-VV-002), `docs/TODO.md` P5.2 |
+| CI `cargo audit` / `cargo deny` gates | Closed | Supply-chain CI gate landed: `supply-chain` job in `.github/workflows/ci.yml` runs `cargo audit --deny warnings` + `cargo deny --all-features check`. Policy at `deny.toml`. Public summary at `docs/SECURITY.md`. | (closed) | #140 (TEST-VV-002), `docs/TODO.md` P5.2 |
 | CI `cargo geiger` gate for REQ-NF-SEC-001 | Low | `unsafe` block count tracked manually | Add geiger + grep-based `// SAFETY:` adjacency check | #141 (TEST-VV-003) |
 | CI `no_std` build gate for REQ-NF-PORT-002 | Low | `pae --no-default-features` builds locally; no CI step | Add to `.github/workflows/ci.yml` | #142 (TEST-VV-004) |
 | Fuzz harness for REQ-NF-REL-001/002 | Medium | Three decoders (`EapolFrame`, `EapPacket`, `Mkpdu`) have no fuzz coverage | Add `cargo fuzz` targets | #143 (TEST-VV-005) |
