@@ -20,8 +20,8 @@ This file is a **living snapshot** of where the project stands across the 9-phas
 | 05 Implementation | ✅ Approved (implicit) | 66 issues with `phase:05-approved`; 353 unit tests / 16 065 LoC across 5 crates. All REQ-F + REQ-NF implemented or governance-satisfied | Per-crate gate report can be retro-fitted; the Phase 06 close subsumes the Phase 05 close for daemon-binary scope |
 | 06 Integration | ✅ Approved 2026-06-06 | All 9 INT-NNN landed (#118, #119, #121, #122, #123, #124, #125, #126). 26 cross-crate integration tests. Gate report: `06-integration/phase-gate-report.md` | All 3 prerequisites (#128, #129, #130) now landed in Phase 07 |
 | 07 V&V | ✅ Approved 2026-06-07 | All 3 Phase-06 carry-forward prerequisites landed (#128 PR #132, #129 PR #136, #130 PR #134). FreeRADIUS interop harness P3.1 (PR #137). Clean-room verification record + 35/35 disclaimer coverage (P3.3). 6 TEST-VV-NNN gap issues filed (#139–#144). Gate report: `07-verification-validation/phase-gate-report.md`. **387 passing tests** (was 379 at Phase 06 close, +8). | Three conditional re-arms (#133 EAP method factory, #135 AES Key Wrap, #138 FreeRADIUS CI debug) carry forward to Phase 08 backlog |
-| 08 Transition | ⬜ Not started | `08-transition/README.md` only | Release plan + cargo publish strategy (`docs/TODO.md` P4.1) |
-| 09 Operation & Maintenance | ⬜ Not started | `09-operation-maintenance/README.md` only | Operator runbook + systemd examples (`docs/TODO.md` P4.2) |
+| 08 Transition | ✅ Approved 2026-06-13 | Release plan + operator runbook (PR #157), security review sweep (PR #156), supply-chain CI gate (PR #148 / #140), `--ignored` perf confirmation (PR #149), YANG deferral + Phase 08 gate report (this PR). Gate report: `08-transition/phase-gate-report.md`. **404 passing tests** (was 387 at Phase 07 close, +17). | 7 security-review trackers (#150–#155 + #133 carry-forward) + 5 TEST-VV gaps (#139, #141–#144) + #138 (FreeRADIUS CI) + #133 (EAP method factory) carry forward to Phase 09 backlog |
+| 09 Operation & Maintenance | ⬜ Not started | `09-operation-maintenance/runbook.md` landed at Phase-08 (P4.2); phase-09 entry unblocked | Phase 09 maintenance backlog: security findings #150–#155, TEST-VV gaps, #138 / #133 / YANG follow-ups |
 
 ---
 
@@ -131,8 +131,8 @@ The five workspace crates map onto the IEEE 802.1X-2020 protocol entities as fol
 | 05 Implementation | Implicitly closed by Phase 06 close | 66 PRs with `phase:05-approved`; daemon now boots end-to-end |
 | 06 Integration | `06-integration/phase-gate-report.md` | ✅ Approved 2026-06-06 |
 | 07 Verification & Validation | `07-verification-validation/phase-gate-report.md` | ✅ Approved 2026-06-07 |
-| 08 Transition | — not started — | Release plan + cargo publish strategy (`docs/TODO.md` P4.1) |
-| 09 Operation & Maintenance | — not started — | Operator runbook + systemd examples (`docs/TODO.md` P4.2) |
+| 08 Transition | `08-transition/phase-gate-report.md` | ✅ Approved 2026-06-13 |
+| 09 Operation & Maintenance | — not started — | Phase 09 maintenance backlog (`docs/TODO.md` Priority 5 carry-forwards) |
 
 ---
 
