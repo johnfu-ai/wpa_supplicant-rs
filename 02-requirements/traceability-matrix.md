@@ -181,7 +181,7 @@ Previous editions: 2026-06-06 (Phase 05 implementation refresh per `docs/TODO.md
 | REQ-NF-DEPLOY-002 Graceful Shutdown | #69 | `9092fef` | `crates/wpa-supplicant/src/shutdown.rs` | 6 dedicated tests | Implemented |
 | REQ-NF-DEPLOY-003 TOML Configuration | #70 | (config landing commit) | `crates/wpa-supplicant/src/config.rs`, `…/main.rs` | 12 tests in `config.rs` | Implemented |
 | REQ-NF-DEPLOY-004 systemd Integration | #71 | `51637ad` | `crates/wpa-supplicant/src/systemd.rs` (feature-gated) | 5 dedicated tests | Implemented |
-| REQ-NF-DEPLOY-005 Unix Domain Socket Control | #72 | `d99d446` | `crates/wpa-supplicant/src/control.rs` | 10 dedicated tests | Implemented |
+| REQ-NF-DEPLOY-005 Unix Domain Socket Control | #72 | `d99d446` (impl); #150 (security hardening) | `crates/wpa-supplicant/src/control.rs` | 17 dedicated tests | Implemented |
 
 ## Implementation Summary
 

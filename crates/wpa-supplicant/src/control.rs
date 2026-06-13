@@ -7,10 +7,47 @@
 //! No copyrighted content from the standard is reproduced.
 
 use std::io::BufRead;
+use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::sync::Mutex;
+use std::time::Duration;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
+
+/// Maximum bytes accepted per command line on the control socket.
+///
+/// Per the security review of 2026-06-13 (F-02 / #150): without a per-line
+/// upper bound, a misbehaving or malicious client can send a multi-GB line
+/// and keep the listener-servicing loop reading forever, starving the
+/// supplicant tick. Real commands top out at ~32 bytes (e.g.
+/// `SET_LOG_LEVEL pae::mka=trace`); 256 is generous + memorable.
+const MAX_COMMAND_LINE_BYTES: usize = 256;
+
+/// Maximum number of command lines accepted per connection.
+///
+/// Defence-in-depth alongside `MAX_COMMAND_LINE_BYTES` so that a client
+/// streaming valid-but-tiny lines forever cannot wedge the connection
+/// servicer either.
+const MAX_LINES_PER_CONNECTION: usize = 32;
+
+/// Per-connection read deadline.
+///
+/// Per the security review of 2026-06-13 (F-02 / #150): the `accept`-ed
+/// stream is set to this read timeout so a client that opens a connection
+/// and never sends data cannot wedge `handle_connection`. Real clients
+/// (`nc -U`, `socat`, the future `wpa-supplicant-ctl`) all write within
+/// milliseconds; one second is comfortably above any reasonable RTT.
+const CONNECTION_READ_TIMEOUT: Duration = Duration::from_secs(1);
+
+/// File mode for the control socket inode.
+///
+/// Per the security review of 2026-06-13 (F-01 / #150): bind alone honours
+/// the process umask, which on a typical default-umask root daemon yields
+/// `0o755` — world-readable+executable, group-writable. Tighten to
+/// `0o660` so only members of the daemon's UID/GID can issue commands.
+/// The systemd `.socket` unit's `SocketMode=0660` covers the
+/// socket-activation path; this constant covers the direct-bind path.
+const CONTROL_SOCKET_MODE: u32 = 0o660;
 
 /// Commands from the control interface.
 #[derive(Debug, Clone, PartialEq)]
@@ -88,14 +125,25 @@ pub struct UnixControl {
 impl UnixControl {
     /// Create a Unix control interface bound to the given path.
     ///
-    /// Removes any existing socket file before binding.
+    /// Removes any existing socket file before binding, then chmods the
+    /// new socket to `0o660` so only the daemon's UID/GID can connect
+    /// (per the security review of 2026-06-13 / F-01 / #150).
     pub fn bind(path: &str) -> Result<Self> {
         // Remove stale socket file
         let _ = std::fs::remove_file(path);
 
-        let listener = UnixListener::bind(path)?;
+        let listener = UnixListener::bind(path)
+            .with_context(|| format!("binding control socket at {path}"))?;
 
-        // Set non-blocking
+        // F-01 / #150: chmod the inode immediately after bind. The systemd
+        // `.socket` unit's `SocketMode=0660` covers the socket-activation
+        // path; this covers the direct-bind path. Done as soon as the
+        // path exists so the world-readable window is as small as
+        // possible.
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(CONTROL_SOCKET_MODE))
+            .with_context(|| format!("chmod {CONTROL_SOCKET_MODE:o} on {path}"))?;
+
+        // Non-blocking listener — `accept_commands` polls in a loop.
         listener.set_nonblocking(true)?;
 
         Ok(Self {
@@ -112,36 +160,72 @@ impl UnixControl {
 
     /// Accept pending connections and read commands.
     ///
-    /// Call this from the event loop tick.
+    /// Call this from the event loop tick. The listener mutex is held
+    /// only for the `accept` itself; per-connection servicing happens
+    /// after the lock is dropped, per the security review of 2026-06-13
+    /// (F-02 / #150) — otherwise a slow client can wedge the entire
+    /// listener.
     fn accept_commands(&self) -> Result<()> {
-        let listener_guard = self.listener.lock().unwrap();
-        if let Some(listener) = listener_guard.as_ref() {
-            loop {
+        loop {
+            let stream = {
+                // Held for the accept call only.
+                let listener_guard = self.listener.lock().unwrap();
+                let Some(listener) = listener_guard.as_ref() else {
+                    return Ok(());
+                };
                 match listener.accept() {
-                    Ok((stream, _addr)) => {
-                        if let Err(e) = self.handle_connection(&stream) {
-                            tracing::debug!(error = %e, "control connection error");
-                        }
-                    }
-                    Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                        break;
-                    }
-                    Err(e) => {
-                        return Err(e.into());
-                    }
+                    Ok((stream, _addr)) => stream,
+                    Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => break,
+                    Err(e) => return Err(e.into()),
                 }
+                // listener_guard dropped here.
+            };
+            if let Err(e) = self.handle_connection(stream) {
+                tracing::debug!(error = %e, "control connection error");
             }
         }
         Ok(())
     }
 
     /// Handle a single control connection.
-    fn handle_connection(&self, stream: &UnixStream) -> Result<()> {
-        let reader = std::io::BufReader::new(stream);
+    ///
+    /// Bounded by `MAX_COMMAND_LINE_BYTES` per line and
+    /// `CONNECTION_READ_TIMEOUT` per read syscall (F-02 / #150).
+    fn handle_connection(&self, stream: UnixStream) -> Result<()> {
+        // Switch the accepted stream to blocking-with-timeout: the
+        // listener was non-blocking but `accept` returns a stream that
+        // inherits the *socket*'s blocking flag (i.e. blocking, despite
+        // the listener being non-blocking). A read deadline lets a
+        // misbehaving client get cleanly cut off.
+        stream.set_nonblocking(false)?;
+        stream.set_read_timeout(Some(CONNECTION_READ_TIMEOUT))?;
+
+        // Cap the total bytes any single connection can deliver so a
+        // misbehaving client (multi-GB line, or trickle-fed stream)
+        // cannot wedge the daemon. Per-line limit × max lines per
+        // connection bounds both surfaces.
+        let total_cap = (MAX_COMMAND_LINE_BYTES * MAX_LINES_PER_CONNECTION) as u64;
+        let reader = std::io::BufReader::new(std::io::Read::take(stream, total_cap));
         let mut pending = self.pending.lock().unwrap();
+        let mut count = 0usize;
         for line in reader.lines() {
+            count += 1;
+            if count > MAX_LINES_PER_CONNECTION {
+                break;
+            }
             match line {
                 Ok(line) => {
+                    if line.len() > MAX_COMMAND_LINE_BYTES {
+                        // Truncated by the global `take` or otherwise
+                        // oversize — log and stop reading from this
+                        // client.
+                        tracing::warn!(
+                            len = line.len(),
+                            "control command line exceeded {} bytes; closing connection",
+                            MAX_COMMAND_LINE_BYTES
+                        );
+                        break;
+                    }
                     if let Some(cmd) = ControlCommand::parse(&line) {
                         pending.push(cmd);
                     }
@@ -336,6 +420,135 @@ mod tests {
         }
         // After drop, socket should be cleaned up
         assert!(!socket_path.exists());
+    }
+
+    /// Verifies: REQ-NF-DEPLOY-005 (#72), security-review F-01 (#150).
+    ///
+    /// After `bind`, the socket inode mode must be exactly `0o660` so
+    /// that local users outside the daemon's UID/GID cannot connect.
+    #[test]
+    fn test_unix_control_socket_mode_is_0660() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let socket_path = dir.path().join("mode.sock");
+        let socket_str = socket_path.to_str().unwrap();
+
+        let _ctrl = UnixControl::bind(socket_str).unwrap();
+        let meta = std::fs::metadata(&socket_path).unwrap();
+        let mode = meta.permissions().mode() & 0o777;
+        assert_eq!(
+            mode, CONTROL_SOCKET_MODE,
+            "socket {socket_str} mode should be {CONTROL_SOCKET_MODE:o}, got {mode:o}",
+        );
+    }
+
+    /// Verifies: REQ-NF-DEPLOY-005 (#72), security-review F-02 (#150).
+    ///
+    /// A client that connects but never writes anything (idle stream)
+    /// must not block `poll_command` indefinitely. The accepted stream's
+    /// read timeout (`CONNECTION_READ_TIMEOUT`) bounds the wait.
+    #[test]
+    fn test_unix_control_idle_client_does_not_wedge_poll() {
+        let dir = tempfile::tempdir().unwrap();
+        let socket_path = dir.path().join("idle.sock");
+        let socket_str = socket_path.to_str().unwrap();
+
+        let ctrl = UnixControl::bind(socket_str).unwrap();
+
+        // Connect and immediately stop writing — never close. The daemon
+        // will block in `read_line` until `CONNECTION_READ_TIMEOUT` fires.
+        let _stream = UnixStream::connect(socket_str).unwrap();
+
+        let started = std::time::Instant::now();
+        let _ = ctrl.poll_command().unwrap();
+        let elapsed = started.elapsed();
+
+        // Generous slack (2× timeout) to absorb scheduling jitter on
+        // loaded CI hosts. The point is "does not hang forever," not
+        // "exact timeout."
+        assert!(
+            elapsed < CONNECTION_READ_TIMEOUT * 2,
+            "poll_command took {elapsed:?}, should give up after {CONNECTION_READ_TIMEOUT:?}",
+        );
+    }
+
+    /// Verifies: REQ-NF-DEPLOY-005 (#72), security-review F-02 (#150).
+    ///
+    /// A line longer than `MAX_COMMAND_LINE_BYTES` must not be parsed
+    /// as a command, and must not exhaust the daemon's allocator. We
+    /// cap at 256 bytes; a 100 KB line is two orders of magnitude over.
+    #[test]
+    fn test_unix_control_oversize_line_rejected() {
+        let dir = tempfile::tempdir().unwrap();
+        let socket_path = dir.path().join("oversize.sock");
+        let socket_str = socket_path.to_str().unwrap();
+
+        let ctrl = UnixControl::bind(socket_str).unwrap();
+
+        let mut stream = UnixStream::connect(socket_str).unwrap();
+        // 100 KB of "A" with a trailing newline — well over the
+        // MAX_COMMAND_LINE_BYTES cap.
+        let huge = "A".repeat(100_000) + "\n";
+        std::io::Write::write_all(&mut stream, huge.as_bytes()).unwrap();
+        // Then a real command — which the daemon should ignore because
+        // the connection is already truncated.
+        std::io::Write::write_all(&mut stream, b"SHUTDOWN\n").unwrap();
+        stream.shutdown(std::net::Shutdown::Write).unwrap();
+
+        std::thread::sleep(std::time::Duration::from_millis(100));
+
+        // The first line was oversize — it must not parse as a command.
+        // The truncated middle (which begins with "AAA…") is not a
+        // recognized command either. So no commands should land in
+        // pending. (If `take` truncated mid-line and the rest contained
+        // "SHUTDOWN", we'd see a Shutdown — which is exactly the
+        // behaviour we're protecting against.)
+        let mut commands = Vec::new();
+        while let Some(cmd) = ctrl.poll_command().unwrap() {
+            commands.push(cmd);
+        }
+        assert!(
+            !commands.contains(&ControlCommand::Shutdown),
+            "oversize line must not let a downstream SHUTDOWN through; got {commands:?}",
+        );
+    }
+
+    /// Verifies: REQ-NF-DEPLOY-005 (#72), security-review F-02 (#150).
+    ///
+    /// A client streaming many tiny valid lines is bounded by
+    /// `MAX_LINES_PER_CONNECTION`. Beyond that, the daemon stops
+    /// reading from the connection — preventing an infinite-stream
+    /// client from monopolizing the listener servicer.
+    #[test]
+    fn test_unix_control_per_connection_line_cap() {
+        let dir = tempfile::tempdir().unwrap();
+        let socket_path = dir.path().join("flood.sock");
+        let socket_str = socket_path.to_str().unwrap();
+
+        let ctrl = UnixControl::bind(socket_str).unwrap();
+
+        let mut stream = UnixStream::connect(socket_str).unwrap();
+        // Send well over MAX_LINES_PER_CONNECTION valid commands.
+        for _ in 0..(MAX_LINES_PER_CONNECTION * 4) {
+            std::io::Write::write_all(&mut stream, b"GET_STATE\n").unwrap();
+        }
+        stream.shutdown(std::net::Shutdown::Write).unwrap();
+
+        std::thread::sleep(std::time::Duration::from_millis(100));
+
+        let mut count = 0usize;
+        while ctrl.poll_command().unwrap().is_some() {
+            count += 1;
+            if count > MAX_LINES_PER_CONNECTION * 4 {
+                panic!(
+                    "saw {count} commands; per-connection cap of {MAX_LINES_PER_CONNECTION} not enforced",
+                );
+            }
+        }
+        assert!(
+            count <= MAX_LINES_PER_CONNECTION,
+            "per-connection cap not enforced: parsed {count} commands, cap is {MAX_LINES_PER_CONNECTION}",
+        );
     }
 
     /// Verifies: REQ-NF-DEPLOY-005 (#72)
