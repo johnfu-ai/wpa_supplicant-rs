@@ -320,7 +320,16 @@ pub fn aes_key_unwrap(ciphertext: &[u8], kek: &[u8]) -> Result<Vec<u8>, crate::P
     }
 
     // IV check: A must equal the default IV.
-    if a != KEY_WRAP_IV {
+    //
+    // Constant-time comparison per security-review F-05 (#153); mirrors
+    // the XOR-accumulate pattern in `verify_icv` above so partially-
+    // correct inputs do not leak byte-position information through
+    // short-circuit array equality.
+    let mut diff = 0u8;
+    for (x, y) in a.iter().zip(KEY_WRAP_IV.iter()) {
+        diff |= x ^ y;
+    }
+    if diff != 0 {
         // Zeroize before returning error per ADR-SEC-004 (#76).
         a.zeroize();
         for semi in &mut r {
@@ -473,6 +482,12 @@ mod tests {
     // -----------------------------------------------------------------------
 
     /// Unwrap with wrong KEK fails IV check.
+    ///
+    /// Verifies: REQ-F-MKA-006 (#24, SAK Reception/Install), RFC 3394 §3
+    /// (Integrity-check property), security-review F-05 (#153). The IV
+    /// check uses constant-time comparison; this test exercises the
+    /// failing path so any regression in the wrong-KEK behaviour shows
+    /// up immediately.
     #[test]
     fn test_unwrap_wrong_kek_fails() {
         let kek1 = [0x00_u8; 16];
