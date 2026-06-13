@@ -159,7 +159,6 @@ The five workspace crates map onto the IEEE 802.1X-2020 protocol entities as fol
 | Real EAP method construction from `EapMethodConfig` (PEM TLS engine) | Info — defers full EAP-TLS / PEAP / TEAP handshake in interop harness | #133 |
 | FreeRADIUS CI auto-trigger | Info — interop CI is `workflow_dispatch`-only until container config debug | #138 |
 | `cargo llvm-cov` ≥ 80 % CI gate (REQ-NF-MNT-001) | Low | #139 (TEST-VV-001) |
-| `cargo audit` + `cargo deny check` CI gates | Low | #140 (TEST-VV-002) |
 | `cargo geiger` + `// SAFETY:` adjacency CI gate (REQ-NF-SEC-001) | Low | #141 (TEST-VV-003) |
 | `no_std` build CI gate for `pae` (REQ-NF-PORT-002) | Low | #142 (TEST-VV-004) |
 | Fuzz harness for `EapolFrame` / `EapPacket` / `Mkpdu` decoders | Medium | #143 (TEST-VV-005) |

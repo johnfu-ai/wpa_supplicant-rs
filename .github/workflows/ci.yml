@@ -57,3 +57,26 @@ jobs:
           cargo build -p logon --target aarch64-unknown-linux-gnu
       - name: Build (binary crate)
         run: cargo build -p wpa-supplicant --target aarch64-unknown-linux-gnu
+
+  supply-chain:
+    # Implements: docs/TODO.md P5.2 / issue #140 (TEST-VV-002).
+    # Verifies: REQ-NF-SEC-001/002/003/005 supply-chain posture.
+    name: Supply-chain (audit + deny)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: supply-chain
+      # Use prebuilt binaries (taiki-e/install-action) instead of
+      # `cargo install` so the gate runs in seconds, not minutes, and
+      # is robust against crates.io rate limits.
+      - name: Install cargo-audit + cargo-deny (prebuilt)
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit,cargo-deny
+      - name: cargo audit (advisories + yanked)
+        run: cargo audit --deny warnings
+      - name: cargo deny check
+        run: cargo deny --all-features check

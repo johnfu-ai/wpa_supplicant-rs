@@ -5,6 +5,11 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
+# Binary crate — distributed as a release artifact, not via crates.io.
+# Setting publish = false also lets cargo-deny's `allow-wildcard-paths`
+# accept the workspace-internal path = "..." dependencies on the
+# library crates (pae / eapol-supp / eap-peer / logon).
+publish = false
 
 [dependencies]
 pae = { path = "../pae" }

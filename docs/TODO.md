@@ -96,7 +96,7 @@ Empty today. Plan, do not yet execute, until Phase 07 closes.
 ## Priority 5 — Cross-cutting hygiene (do whenever it fits)
 
 - [ ] **P5.1 Run `SKILL/prompts/security-review.prompt.md`** over the recent feature batch (#37, #50, #51, #59, #68, #69, #70, #71, #72, #86) — overdue per `CLAUDE.md` workflow rule *"After implementing features, perform a security review."*
-- [ ] **P5.2 Add `cargo audit` + `cargo deny check` to CI** (`.github/workflows/ci.yml`).
+- [x] **P5.2 Add `cargo audit` + `cargo deny check` to CI** (`.github/workflows/ci.yml`) — done 2026-06-13 (also closes #140 / TEST-VV-002). New `supply-chain` job runs `cargo audit --deny warnings` + `cargo deny --all-features check` on every push and PR. Policy lives at `deny.toml` (advisories + license allow-list + bans + sources). Public summary in `docs/SECURITY.md`. Library crates remain publishable pre-1.0; `wildcards = "warn"` is the temporary stance until the Phase-08 release plan (P4.1) pins explicit versions on workspace-internal `path = "..."` deps.
 - [ ] **P5.3 Decide YANG management scope** — the `8021X-2020.YANG/` sibling repo is checked in but no Rust code consumes it. Either:
   - (a) Open `ADR-MGMT-009: NETCONF/YANG management surface` via `SKILL/prompts/architecture-starter.prompt.md`, or
   - (b) Add an explicit deferral note to `8021X-2020.YANG/README.md` so the scope decision is documented.
@@ -106,6 +106,8 @@ Empty today. Plan, do not yet execute, until Phase 07 closes.
 ---
 
 ## Done
+
+- [x] *(2026-06-13)* **P5.2 / TEST-VV-002 (#140) — `cargo audit` + `cargo deny` CI gate** New `supply-chain` job in `.github/workflows/ci.yml` runs `cargo audit --deny warnings` and `cargo deny --all-features check` on every push and PR. Policy at `deny.toml`: advisories (yanked/unmaintained), license allow-list (Apache-2.0 + LLVM-exception, BSD-3-Clause, MIT, Unicode-3.0, Unlicense — scoped to currently-encountered licenses; new ones fail closed), bans (`wildcards = "warn"` pending Phase-08 release plan; `multiple-versions = "warn"`), sources (crates.io only). Operator-facing security posture summary in new `docs/SECURITY.md`. Binary crate (`wpa-supplicant`) marked `publish = false` since it's distributed as a release artifact, not via crates.io. Library crates remain publishable pre-1.0. Verified locally: `cargo audit` exit 0; `cargo deny --all-features check` exit 0 (advisories ok / bans ok / licenses ok / sources ok).
 
 - [x] *(2026-06-13)* **#135 / verification of AES Key Wrap close-out** Confirmed PR #146 / commit `4c17b2e` already implemented RFC 3394 AES Key Wrap in `crates/pae/src/crypto.rs` and wired `MkaParticipantAdapter::unwrap_sak` to it. Issue **#135** auto-closed by `Fixes #135` keyword on the PR. Refreshed live references to the previously-stubbed state: `crates/wpa-supplicant/tests/interop_freeradius.rs` doc-comments + TODO marker; `07-verification-validation/interop/scripts/run-supplicant.sh` acceptance comment; `07-verification-validation/interop/README.md` "current status" + traceability bullets; `docs/PROGRESS.md` MKA + wpa-supplicant "Open gaps" rows + Open Gaps table; `02-requirements/traceability-matrix.md` MKA SAK install gap row flipped to Closed. Historical artifacts (Phase 07 gate report, Done section, traceability "Closed Gaps" header context) intentionally left as-is per audit-trail rules. AES Key Wrap test counts: `cargo test -p pae --lib` → 178 passed / 8 ignored; `cargo test -p wpa-supplicant --test aes_key_wrap_sak` → 3 passed.
 

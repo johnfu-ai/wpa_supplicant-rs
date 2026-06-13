@@ -1,0 +1,79 @@
+# cargo-deny configuration for wpa_supplicant-rs
+#
+# Implements: docs/TODO.md P5.2 / GitHub issue #140 (TEST-VV-002).
+# Verifies: REQ-NF-SEC-001 / REQ-NF-SEC-002 / REQ-NF-SEC-003 / REQ-NF-SEC-005
+# supply-chain posture per the traceability matrix governance row.
+#
+# This file is consumed by `cargo deny check` in the `supply-chain` CI job.
+# Run locally with:  cargo deny check --config deny.toml
+#
+# IMPORTANT: This implementation is based on understanding of the
+# Rust supply-chain best-practice tooling. No copyrighted content
+# from IEEE 802.1X-2020 is reproduced.
+
+# ---------------------------------------------------------------------------
+# Advisories — vulnerabilities & yanked crates (RustSec advisory DB).
+# ---------------------------------------------------------------------------
+[advisories]
+version = 2
+# Treat known vulnerabilities as hard errors. cargo-audit is strict here too.
+yanked = "deny"
+# `unmaintained` is an `informational` advisory; deny on workspace crates only
+# (transitive `unmaintained` crates land out of our control too often to be
+# a hard CI gate without scoping). See cargo-deny docs.
+unmaintained = "workspace"
+# `unsound` is rare; treat any occurrence as a CI red.
+ignore = []
+
+# ---------------------------------------------------------------------------
+# Licenses — SPDX policy.
+# ---------------------------------------------------------------------------
+# We accept permissive + Apache-style + Mozilla-style + BSD/ISC/Unicode/Zlib.
+# We do NOT accept GPL/AGPL family for runtime dependencies (LGPL allowed only
+# when paired via OR with a permissive option, which the SPDX evaluator will
+# resolve to the permissive side).
+[licenses]
+version = 2
+# Allow-list scoped to licenses currently encountered in the dependency
+# tree. New transitive licenses will fail closed (the gate point); add
+# them here in a follow-up PR with rationale. SPDX evaluator resolves
+# `MIT OR <permissive>` to the most permissive option.
+allow = [
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-3-Clause",
+    "MIT",
+    "Unicode-3.0",
+    "Unlicense",
+]
+confidence-threshold = 0.8
+
+# ---------------------------------------------------------------------------
+# Bans — duplicate-version policy and explicit ban list.
+# ---------------------------------------------------------------------------
+[bans]
+multiple-versions = "warn"     # workspace is small; surface but don't fail.
+# `wildcards = "warn"` (not "deny") because workspace-internal `path = "..."`
+# deps without explicit `version = ` are reported as wildcards by cargo-deny.
+# Pinning a version on them is a Phase-08 release-plan task (docs/TODO.md
+# P4.1, 08-transition/release-plan.md). Until that lands, surface external
+# wildcards but don't red-CI on the workspace-internal ones. `cargo audit`
+# is the real safety net for vulnerable transitive crates.
+wildcards = "warn"
+# `allow-wildcard-paths` only takes effect for crates that are themselves
+# `publish = false`. The binary crate is `publish = false`; the four
+# library crates remain publishable pre-1.0 so the demoted "warn" above is
+# what actually keeps CI green for them.
+allow-wildcard-paths = true
+deny = []
+skip = []
+skip-tree = []
+
+# ---------------------------------------------------------------------------
+# Sources — only crates.io is permitted.
+# ---------------------------------------------------------------------------
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []
