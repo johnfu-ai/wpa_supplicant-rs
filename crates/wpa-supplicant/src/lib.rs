@@ -25,7 +25,7 @@ mod systemd;
 
 pub use config::{
     Config, ControlConfig, ControlType, EapConfig, EapMethodConfig, LoggingConfig, LogonConfig,
-    MacsecConfig, NidGroupConfig,
+    MacsecConfig, NidGroupConfig, Psk,
 };
 pub use control::{ControlCommand, ControlInterface};
 pub use logging::Logging;
