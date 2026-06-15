@@ -981,6 +981,17 @@ impl<C: MkaContext> MkaParticipant<C> {
         self.mn
     }
 
+    /// Test-only: set the actor MN directly.
+    ///
+    /// Used to drive the MN to `u32::MAX` for saturation-policy
+    /// testing (security-review F-09 / #155).
+    ///
+    /// Verifies: #155 (REQ-F-MKA-002: MKA Transport, F-09: MN wrap policy)
+    #[cfg(test)]
+    pub fn set_mn_for_test(&mut self, mn: u32) {
+        self.mn = mn;
+    }
+
     /// Current cipher suite.
     pub fn cipher_suite(&self) -> CipherSuite {
         self.cipher_suite
@@ -1023,6 +1034,25 @@ impl<C: MkaContext> MkaParticipant<C> {
         &self.sci
     }
 
+    /// Increment the actor's MN by one, refusing on saturation.
+    ///
+    /// IEEE 802.1X-2020 Cl.9.4 requires the actor MN to be strictly
+    /// monotonic within a Connectivity Association. Wrapping silently
+    /// would let an attacker with a long capture replay a previously-
+    /// accepted MKPDU. The canonical Hello Time of 2 s puts the
+    /// `u32::MAX` horizon at ~272 years, so saturation is an
+    /// operational corner case; the semantically correct response is
+    /// to refuse further emission and surface
+    /// [`crate::PaeError::MnSaturated`] so callers can signal CA
+    /// renewal.
+    ///
+    /// Implements: #155 (security-review F-09: MKA MN wrap policy)
+    fn bump_mn(&mut self) -> Result<(), crate::PaeError> {
+        self.mn = self.mn.checked_add(1).ok_or(crate::PaeError::MnSaturated)?;
+        Ok(())
+    }
+
+    ///
     /// Build an MKPDU for transmission. Per Cl.9.4, Cl.9.7.
     ///
     /// The MKPDU contains the Basic Parameter Set with this participant's
@@ -1082,8 +1112,9 @@ impl<C: MkaContext> MkaParticipant<C> {
         let _actor_mi = bps.actor_mi;
         let _actor_mn = bps.actor_mn;
 
-        // Increment our own MN after processing a peer's MKPDU
-        self.mn = self.mn.wrapping_add(1);
+        // Increment our own MN after processing a peer's MKPDU.
+        // See `bump_mn` for the Cl.9.4 monotonicity / saturation policy (#155).
+        self.bump_mn()?;
 
         Ok(vec![])
     }
@@ -1100,10 +1131,14 @@ impl<C: MkaContext> MkaParticipant<C> {
         };
 
         if should_transmit {
+            // See `bump_mn` for the Cl.9.4 monotonicity / saturation policy (#155).
+            // Check saturation *before* transmitting so we never reuse the
+            // same MN in two successive MKPDUs.
+            self.bump_mn()?;
+
             let mkpdu_bytes = self.build_mkpdu()?;
             self.ctx.send_mkpdu(&mkpdu_bytes)?;
             self.last_hello = Some(now);
-            self.mn = self.mn.wrapping_add(1);
             Ok(vec![PaeEvent::MkaTransmit { mkpdu: mkpdu_bytes }])
         } else {
             Ok(vec![])
@@ -1125,12 +1160,15 @@ impl<C: MkaContext> MkaParticipant<C> {
             return Err(crate::PaeError::NotKeyServer);
         }
 
+        // See `bump_mn` for the Cl.9.4 monotonicity / saturation policy (#155).
+        // Check saturation before mutating state.
+        self.bump_mn()?;
+
         let new_sak = self.ctx.generate_sak(self.cipher_suite)?;
         let _wrapped = self.ctx.wrap_sak(&new_sak, &self.kek)?;
         let an = new_sak.an();
         let sak_key = new_sak.as_bytes().to_vec();
         self.sak = Some(new_sak);
-        self.mn = self.mn.wrapping_add(1);
 
         Ok(vec![PaeEvent::MkaSakInstalled {
             sak_key,
@@ -1150,12 +1188,15 @@ impl<C: MkaContext> MkaParticipant<C> {
     /// # Errors
     /// Returns `PaeError::CryptoError` if SAK unwrapping fails.
     pub fn install_sak(&mut self, wrapped: &[u8], an: u8) -> Result<Sak, crate::PaeError> {
+        // See `bump_mn` for the Cl.9.4 monotonicity / saturation policy (#155).
+        // Check saturation before mutating state.
+        self.bump_mn()?;
+
         let sak = self.ctx.unwrap_sak(wrapped, &self.kek, an)?;
         self.sak = Some(
             Sak::from_bytes(sak.as_bytes(), an)
                 .map_err(|e| crate::PaeError::KeyError(format!("installed SAK invalid: {}", e)))?,
         );
-        self.mn = self.mn.wrapping_add(1);
         Ok(sak)
     }
 
@@ -3353,6 +3394,166 @@ mod tests {
         assert!(
             expired.contains(&TimerId::MkaBoundedHello),
             "Bounded Hello must fire at exactly 500ms under load"
+        );
+    }
+
+    // --- #155 (security-review F-09): MN saturation / wrap-rejection policy ---
+
+    /// Verifies: #155 (F-09)
+    /// Per IEEE 802.1X-2020 Cl.9.4.
+    /// `bump_mn` increments MN normally when below u32::MAX.
+    #[test]
+    fn test_bump_mn_normal_increment() {
+        let mut p = make_participant();
+        assert_eq!(p.mn(), 1);
+        // step() calls bump_mn() internally
+        p.step().unwrap();
+        assert_eq!(p.mn(), 2, "MN should increment to 2 after step");
+    }
+
+    /// Verifies: #155 (F-09)
+    /// Per IEEE 802.1X-2020 Cl.9.4.
+    /// `step()` (hello_tick path) returns `PaeError::MnSaturated` when
+    /// the actor MN is at `u32::MAX`. The MN must not silently wrap
+    /// to zero — that would let an attacker replay a previously-accepted
+    /// MKPDU.
+    #[test]
+    fn test_mn_saturated_step() {
+        let mut p = make_participant();
+        p.set_mn_for_test(u32::MAX);
+        let result = p.step();
+        assert!(
+            matches!(result, Err(crate::PaeError::MnSaturated)),
+            "step() at MN=u32::MAX must return MnSaturated, got {:?}",
+            result
+        );
+        // MN must remain at u32::MAX (not wrapped)
+        assert_eq!(p.mn(), u32::MAX, "MN must not wrap on saturation");
+    }
+
+    /// Verifies: #155 (F-09)
+    /// Per IEEE 802.1X-2020 Cl.9.4.
+    /// `handle_mkpdu()` returns `PaeError::MnSaturated` when the actor
+    /// MN is at `u32::MAX`. Even after processing a valid peer MKPDU,
+    /// the participant must refuse to emit with a wrapped MN.
+    #[test]
+    fn test_mn_saturated_handle_mkpdu() {
+        let mut p = make_participant();
+        p.set_mn_for_test(u32::MAX);
+
+        // Build a valid MKPDU from a "peer"
+        let cak = Cak::from_bytes(&[0x01; 16]).unwrap();
+        let ckn = Ckn::from_bytes(vec![0x02; 16]).unwrap();
+        let kdf = AesCmacKdf;
+        let ick = kdf.derive_ick(&cak, &ckn).unwrap();
+
+        let bps = crate::mkpdu::BasicParameterSet {
+            version: crate::mkpdu::MKPDU_VERSION,
+            key_server_priority: 0x20,
+            macsec_capability: 3,
+            macsec_desired: true,
+            sci: Sci::new([0xAA; 6], 1),
+            actor_mi: [0xBB; 12],
+            actor_mn: 5,
+            key_server_mi: [0xBB; 12],
+            ckn,
+            cipher_suite: CipherSuite::GcmAes128,
+            an: 0,
+        };
+
+        let mkpdu_no_icv =
+            crate::mkpdu::Mkpdu::new(vec![crate::mkpdu::ParameterSet::Basic(bps)]).unwrap();
+        let payload = mkpdu_no_icv.encode_without_icv().unwrap();
+        let icv = compute_icv(&payload, &ick).unwrap();
+
+        let mkpdu_with_icv = crate::mkpdu::Mkpdu::new(vec![
+            mkpdu_no_icv.parameter_sets()[0].clone(),
+            crate::mkpdu::ParameterSet::Icv(icv),
+        ])
+        .unwrap();
+        let raw = mkpdu_with_icv.encode().unwrap();
+
+        let result = p.handle_mkpdu(&raw);
+        assert!(
+            matches!(result, Err(crate::PaeError::MnSaturated)),
+            "handle_mkpdu() at MN=u32::MAX must return MnSaturated, got {:?}",
+            result
+        );
+        assert_eq!(p.mn(), u32::MAX, "MN must not wrap on saturation");
+    }
+
+    /// Verifies: #155 (F-09)
+    /// Per IEEE 802.1X-2020 Cl.9.4.
+    /// `distribute_sak()` returns `PaeError::MnSaturated` when the actor
+    /// MN is at `u32::MAX`. A Key Server must not distribute a SAK with
+    /// a wrapped MN.
+    #[test]
+    fn test_mn_saturated_distribute_sak() {
+        let mut p = make_participant();
+        assert!(p.is_key_server());
+        p.set_mn_for_test(u32::MAX);
+
+        let result = p.distribute_sak();
+        assert!(
+            matches!(result, Err(crate::PaeError::MnSaturated)),
+            "distribute_sak() at MN=u32::MAX must return MnSaturated, got {:?}",
+            result
+        );
+        assert_eq!(p.mn(), u32::MAX, "MN must not wrap on saturation");
+        // No SAK should have been installed
+        assert!(p.sak().is_none(), "SAK must not be installed on saturation");
+    }
+
+    /// Verifies: #155 (F-09)
+    /// Per IEEE 802.1X-2020 Cl.9.4.
+    /// `install_sak()` returns `PaeError::MnSaturated` when the actor
+    /// MN is at `u32::MAX`. A non-Key-Server must not install a received
+    /// SAK with a wrapped MN.
+    #[test]
+    fn test_mn_saturated_install_sak() {
+        let mut p = make_participant();
+
+        // Create a valid wrapped SAK using real AES Key Wrap per RFC 3394
+        let sak_key = [0xAB_u8; 16];
+        let wrapped =
+            crate::crypto::aes_key_wrap(&sak_key, p.kek.as_bytes()).expect("wrap should succeed");
+
+        // Now drive MN to saturation
+        p.set_mn_for_test(u32::MAX);
+
+        let result = p.install_sak(&wrapped, 1);
+        assert!(
+            matches!(result, Err(crate::PaeError::MnSaturated)),
+            "install_sak() at MN=u32::MAX must return MnSaturated, got {:?}",
+            result
+        );
+        assert_eq!(p.mn(), u32::MAX, "MN must not wrap on saturation");
+        // No SAK should have been installed
+        assert!(p.sak().is_none(), "SAK must not be installed on saturation");
+    }
+
+    /// Verifies: #155 (F-09)
+    /// Per IEEE 802.1X-2020 Cl.9.4.
+    /// `PaeError::MnSaturated` Display message references Cl.9.4 and
+    /// signals CA renewal — the semantically correct operator action.
+    #[test]
+    fn test_mn_saturated_error_display() {
+        let err = crate::PaeError::MnSaturated;
+        let msg = format!("{}", err);
+        assert!(
+            msg.contains("u32::MAX"),
+            "MnSaturated message must mention u32::MAX: {}",
+            msg
+        );
+        assert!(
+            msg.contains("Cl.9.4"),
+            "MnSaturated message must reference Cl.9.4: {}",
+            msg
+        );
+        assert!(
+            msg.contains("renewed"),
+            "MnSaturated message must mention CA renewal: {}",
+            msg
         );
     }
 }

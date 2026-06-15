@@ -82,6 +82,19 @@ pub enum PaeError {
 
     /// Crypto operation failed.
     CryptoError(PaeString),
+
+    /// MKA Member Number reached `u32::MAX`.
+    ///
+    /// IEEE 802.1X-2020 Cl.9.4 requires that the actor MN be strictly
+    /// monotonic within a Connectivity Association. Wrapping silently
+    /// would let an attacker with a long capture replay a previously-
+    /// accepted MKPDU. At the canonical Hello Time of 2 s the wrap
+    /// horizon is ~272 years, so this is an operational corner case;
+    /// the semantically correct response is to refuse further emission
+    /// from this participant and signal CA renewal.
+    ///
+    /// Implements: #155 (REQ-F-MKA-002: MKA Transport, security-review F-09)
+    MnSaturated,
 }
 
 #[cfg(feature = "std")]
@@ -105,6 +118,10 @@ impl core::fmt::Display for PaeError {
             Self::IcvFailed => write!(f, "ICV verification failed"),
             Self::InvalidMkpdu(s) => write!(f, "invalid MKPDU: {}", s),
             Self::CryptoError(s) => write!(f, "crypto error: {}", s),
+            Self::MnSaturated => write!(
+                f,
+                "MKA actor MN reached u32::MAX; CA must be renewed (Cl.9.4)"
+            ),
         }
     }
 }
