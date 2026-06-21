@@ -3,14 +3,15 @@ name: Interop (FreeRADIUS)
 # Phase 07 V&V — FreeRADIUS interop harness per docs/TODO.md P3.1.
 #
 # Runs the harness under `07-verification-validation/interop/`.
-# **Currently `workflow_dispatch`-only** until the FreeRADIUS
-# container config is debugged in CI (see tracking issue #138 —
-# the v3.2-alpine image exits 1 on boot with the current config
-# in the GitHub Actions sandbox; reproducible locally only).
 #
-# Once #138 closes, this workflow will be re-armed for automatic
-# runs on push/PR by reverting `on:` to the form already documented
-# in `07-verification-validation/interop/README.md`.
+# #138 (FreeRADIUS container exit-1) is FIXED: the alpine/OSSL3 image
+# now boots cleanly (CA_file->ca_file, 2048-bit DH, PEAP virtual_server,
+# TEAP dropped, `radiusd -C` healthcheck, hostapd eapol_version/IP/arg
+# fixes). Both `freeradius` (healthy) and `hostapd` (serving) come up.
+#
+# **Still `workflow_dispatch`-only** because the `--ignored` interop
+# test runs a full EAP handshake that needs the EAP method factory
+# (#133) — re-arming automatic runs on push/PR waits on #133 landing.
 
 on:
   workflow_dispatch: {}

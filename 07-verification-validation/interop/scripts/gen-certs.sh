@@ -58,9 +58,12 @@ EOF
 rm -f "$CLIENT_CERTS/client.csr"
 
 # --- Diffie-Hellman params for RADIUS ---
+# 2048 bits: OpenSSL 3 (used by the freeradius-server alpine image)
+# rejects <2048-bit DH at SSL-context init with "dh key too small",
+# which was the #138 exit-1 root cause. Interop-only, not for prod.
 if [[ ! -f "$SERVER_CERTS/dh.pem" ]]; then
-    echo "[gen-certs] generating DH params (1024 bits — interop only, not for prod)"
-    openssl dhparam -out "$SERVER_CERTS/dh.pem" 1024 2>/dev/null
+    echo "[gen-certs] generating DH params (2048 bits — interop only, not for prod)"
+    openssl dhparam -out "$SERVER_CERTS/dh.pem" 2048 2>/dev/null
 fi
 
 # Tighten permissions — secrets are throwaway but still secrets.
