@@ -23,7 +23,14 @@ jobs:
       - name: Format check
         run: cargo fmt --all -- --check
       - name: Clippy
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        # `--all-features` so feature-gated production code (raw_socket.rs
+        # under `raw-socket`, AES Key Wrap under `macsec`) is also gated.
+        # Per #144 / TEST-VV-006 (REQ-NF-SEC-002): each crate root enables
+        # `clippy::unwrap_used` + `clippy::expect_used` at `warn`, so
+        # `-D warnings` fails CI on any new `.unwrap()` / `.expect()` in
+        # production code. Test modules are exempt via
+        # `#![cfg_attr(test, allow(...))]`.
+        run: cargo clippy --workspace --all-features --all-targets -- -D warnings
       - name: Build
         run: cargo build --workspace
       - name: Test

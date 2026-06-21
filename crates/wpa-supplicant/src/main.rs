@@ -9,6 +9,12 @@
 //! IMPORTANT: This implementation is based on understanding of IEEE 802.1X-2020.
 //! No copyrighted content from the standard is reproduced.
 
+// Per #144 / TEST-VV-006 (REQ-NF-SEC-002): forbid `.unwrap()` / `.expect()`
+// in production code. The two `.expect()` calls below are the documented
+// fatal-init residuals — startup cannot proceed without logging or signal
+// handling, so panicking with a message is the desired behavior.
+#![warn(clippy::unwrap_used, clippy::expect_used)]
+
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::thread;
@@ -30,11 +36,17 @@ pub const TICK_SLEEP_MS: u64 = 100;
 
 fn main() {
     // --- Logging ---
+    // Fatal init: the daemon cannot operate without logging. Documented
+    // residual allow-listed per #144 / REQ-NF-SEC-002.
+    #[allow(clippy::expect_used)]
     let logging = Logging::init("info").expect("failed to initialize logging");
 
     tracing::info!("wpa_supplicant-rs starting");
 
     // --- Signal handling ---
+    // Fatal init: graceful-shutdown (REQ-NF-DEPLOY-002 / #69) depends on
+    // signal handlers. Documented residual allow-listed per #144.
+    #[allow(clippy::expect_used)]
     let shutdown_handler = ShutdownHandler::install().expect("failed to install signal handlers");
 
     // --- CLI args ---

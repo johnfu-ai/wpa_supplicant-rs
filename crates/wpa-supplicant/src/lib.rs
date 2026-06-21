@@ -9,6 +9,11 @@
 //! IMPORTANT: This implementation is based on understanding of IEEE 802.1X-2020.
 //! No copyrighted content from the standard is reproduced.
 
+// Per #144 / TEST-VV-006 (REQ-NF-SEC-002): forbid `.unwrap()` / `.expect()`
+// in production code. Test modules use `.unwrap()` freely and are exempt.
+#![warn(clippy::unwrap_used, clippy::expect_used)]
+#![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
+
 mod config;
 pub mod control;
 mod eap_session;

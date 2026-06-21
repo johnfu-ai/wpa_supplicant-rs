@@ -11,6 +11,10 @@
 //! No copyrighted content from the standard is reproduced.
 
 #![warn(missing_docs)]
+// Per #144 / TEST-VV-006 (REQ-NF-SEC-002): forbid `.unwrap()` / `.expect()`
+// in production code. Test modules use `.unwrap()` freely and are exempt.
+#![warn(clippy::unwrap_used, clippy::expect_used)]
+#![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 
 /// Logon Process state machine per IEEE 802.1X-2020, Clause 12.
 pub mod logon_sm;
