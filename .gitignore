@@ -18,3 +18,4 @@ Thumbs.db
 # Local Claude Code configuration (per-developer)
 .claude/
 .mcp.json
+__pycache__/

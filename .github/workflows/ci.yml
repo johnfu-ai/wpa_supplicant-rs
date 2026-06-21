@@ -87,3 +87,33 @@ jobs:
         run: cargo audit --deny warnings
       - name: cargo deny check
         run: cargo deny --all-features check
+
+  unsafe-discipline:
+    # Implements: issue #141 (TEST-VV-003).
+    # Verifies: REQ-NF-SEC-001 (#52) — no `unsafe` without `// SAFETY:`.
+    name: Unsafe discipline (geiger + SAFETY gate)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: unsafe-discipline
+      # Hard gate: every `unsafe` block must (a) live in the documented
+      # allowlist (systemd.rs, raw_socket.rs) and (b) carry a `// SAFETY:`
+      # comment on the same line or within the preceding 10 lines.
+      # `cargo geiger` counts unsafe usage but cannot check comment adjacency,
+      # so this script is the enforcing gate; geiger below surfaces totals.
+      - name: SAFETY-adjacency + allowlist gate
+        run: python3 scripts/check_unsafe_safety.py
+      # Informational only: surface the workspace unsafe-usage total in the
+      # run log. `continue-on-error` so a geiger install/compat hiccup never
+      # blocks a merge — the python gate above is the hard contract.
+      - name: Install cargo-geiger
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-geiger
+        continue-on-error: true
+      - name: cargo geiger (totals, informational)
+        run: cargo geiger --workspace --output-format Ascii
+        continue-on-error: true
