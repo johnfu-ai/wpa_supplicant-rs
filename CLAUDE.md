@@ -10,20 +10,21 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 1. What this repo is
 
-`wpa_supplicant-rs` is a clean-room **IEEE 802.1X-2020 supplicant** in Rust — supplicant role only, no Authenticator PAE, no AP-side logic. It is a Cargo workspace of five crates plus nine lifecycle-phase directories that hold the ISO/IEC/IEEE 12207 / 29148 / 1016 / 42010 / 1012 evidence. Phases 01–04 are gate-approved; Phase 05 (Implementation) is unit-complete (393 tests across 5 crates); **Phase 06 (Integration) is the active frontier** — 12 wiring TODOs in `crates/wpa-supplicant/` enumerated as INT-001..INT-009 in `docs/TODO.md` P2.1.
+`wpa_supplicant-rs` is a clean-room **IEEE 802.1X-2020 supplicant** in Rust — supplicant role only, no Authenticator PAE, no AP-side logic. It is a Cargo workspace of five crates plus nine lifecycle-phase directories that hold the ISO/IEC/IEEE 12207 / 29148 / 1016 / 42010 / 1012 evidence. Phases 01–08 are gate-approved (Phase 08 Transition closed 2026-06-13 with `08-transition/phase-gate-report.md`; 418 passing unit/integration tests + 12 `#[ignore]` wall-clock perf tests across 5 crates). **Phase 09 (Operation & Maintenance) is the active frontier** — the security-review hardening batch (#150–#155) landed 2026-06-21; the open backlog is the TEST-VV coverage gaps #139 / #141–#144, carry-forwards #133 (EAP method factory) and #138 (FreeRADIUS CI debug), plus the deferred YANG/NETCONF management-surface ADR. The Phase 06 INT-NNN integration TODOs all landed (#118–#126); the operator-facing entry point for Phase 09 work is `09-operation-maintenance/runbook.md`.
 
 ## 2. Build, test, lint
 
 ```bash
 cargo build --workspace                          # Build all crates
 cargo build -p <crate>                           # Build a single crate
-cargo test  --workspace                          # Run all tests (393 unit + 12 #[ignore] perf)
+cargo test  --workspace                          # Run all tests (418 unit/integration + 12 #[ignore] perf)
 cargo test  -p <crate>                           # Run tests for a single crate
 cargo test  <test_name>                          # Run a single test by name (substring match)
 cargo test  --workspace -- --ignored             # Include wall-clock perf tests (a90c033)
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt   --all -- --check
 cargo doc   --workspace --no-deps
+cargo deny  check                                # Supply-chain gate (advisories, licenses, bans, sources) — CI gates this
 ```
 
 No-std variants (`pae` only — REQ-NF-PORT-002):
@@ -83,7 +84,7 @@ Invoke a skill via the `Skill` tool (`skill: tdd-compile`) — its prompt file l
 
 ## 5. TDD is non-negotiable when implementing code
 
-When starting **any** code task — Phase 05 unit work or Phase 06 integration wiring — follow the project TDD path:
+When starting **any** code task — Phase 09 maintenance fix, follow-up to a security tracker, or a TEST-VV coverage backfill — follow the project TDD path:
 
 1. Invoke `Skill` with `skill: tdd-compile` (or read `SKILL/prompts/tdd-compile.prompt.md` directly and follow its body).
 2. Adopt the `SKILL/agents/tdd-driver.md` profile.
@@ -182,6 +183,8 @@ Spawn these via the `Agent` tool whenever the trigger conditions hit:
 | Role-oriented agent profiles | `SKILL/agents/*.md` |
 | Per-phase artifacts (StR, REQ, ADR, designs, tests, …) | `0N-<phase-name>/` |
 | Latest phase gate report | `0N-<phase-name>/phase-gate-report.md` |
+| Operator-facing runbook (Phase 09 entry point) | `09-operation-maintenance/runbook.md` |
+| Supply-chain policy (cargo-deny) | `deny.toml` |
 | Companion guide for non-Claude agents | `AGENTS.md` |
 | IEEE 802.1X-2020 standard (clause numbers only — clean-room) | `../8021X-2020.md/8021X-2020.md` |
 | Official YANG models | `../8021X-2020.YANG/` |

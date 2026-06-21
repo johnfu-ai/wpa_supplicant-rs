@@ -20,8 +20,8 @@ This file is a **living snapshot** of where the project stands across the 9-phas
 | 05 Implementation | ✅ Approved (implicit) | 66 issues with `phase:05-approved`; 353 unit tests / 16 065 LoC across 5 crates. All REQ-F + REQ-NF implemented or governance-satisfied | Per-crate gate report can be retro-fitted; the Phase 06 close subsumes the Phase 05 close for daemon-binary scope |
 | 06 Integration | ✅ Approved 2026-06-06 | All 9 INT-NNN landed (#118, #119, #121, #122, #123, #124, #125, #126). 26 cross-crate integration tests. Gate report: `06-integration/phase-gate-report.md` | All 3 prerequisites (#128, #129, #130) now landed in Phase 07 |
 | 07 V&V | ✅ Approved 2026-06-07 | All 3 Phase-06 carry-forward prerequisites landed (#128 PR #132, #129 PR #136, #130 PR #134). FreeRADIUS interop harness P3.1 (PR #137). Clean-room verification record + 35/35 disclaimer coverage (P3.3). 6 TEST-VV-NNN gap issues filed (#139–#144). Gate report: `07-verification-validation/phase-gate-report.md`. **387 passing tests** (was 379 at Phase 06 close, +8). | Three conditional re-arms (#133 EAP method factory, #135 AES Key Wrap, #138 FreeRADIUS CI debug) carry forward to Phase 08 backlog |
-| 08 Transition | ✅ Approved 2026-06-13 | Release plan + operator runbook (PR #157), security review sweep (PR #156), supply-chain CI gate (PR #148 / #140), `--ignored` perf confirmation (PR #149), YANG deferral + Phase 08 gate report (this PR). Gate report: `08-transition/phase-gate-report.md`. **404 passing tests** (was 387 at Phase 07 close, +17). | 7 security-review trackers (#150–#155 + #133 carry-forward) + 5 TEST-VV gaps (#139, #141–#144) + #138 (FreeRADIUS CI) + #133 (EAP method factory) carry forward to Phase 09 backlog |
-| 09 Operation & Maintenance | ⬜ Not started | `09-operation-maintenance/runbook.md` landed at Phase-08 (P4.2); phase-09 entry unblocked | Phase 09 maintenance backlog: security findings #150–#155, TEST-VV gaps, #138 / #133 / YANG follow-ups |
+| 08 Transition | ✅ Approved 2026-06-13 | Release plan + operator runbook (PR #157), security review sweep (PR #156), supply-chain CI gate (PR #148 / #140), `--ignored` perf confirmation (PR #149), YANG deferral + Phase 08 gate report (this PR). Gate report: `08-transition/phase-gate-report.md`. **404 passing tests** (was 387 at Phase 07 close, +17). | 7 security-review trackers (#150–#155 + #133 carry-forward) + 5 TEST-VV gaps (#139, #141–#144) + #138 (FreeRADIUS CI) + #133 (EAP method factory) carried forward to Phase 09 backlog |
+| 09 Operation & Maintenance | 🟡 In progress | Security hardening batch complete: all 6 trackers #150–#155 landed 2026-06-21 (PRs #159, #160, #161, #162, #163, #164). **418 passing tests** (+14 from Phase 08 close). | #133 (EAP method factory), #138 (FreeRADIUS CI), TEST-VV gaps #139/#141–#144, YANG/NETCONF management surface (deferred to v1.x) |
 
 ---
 
@@ -102,7 +102,7 @@ The five workspace crates map onto the IEEE 802.1X-2020 protocol entities as fol
 | `eap-peer` | 3 663 | 51 | 0 | 6 (EAP) | — | Unit-complete; interop pending |
 | `logon` | 1 252 | 28 | 0 | 3 (LOGON-001/002/005) | — | Complete |
 | `wpa-supplicant` (bin) | 2 087 | 80 | 0 | — | 6 (DEPLOY + REL-003) | ✅ Phase 07 V&V complete |
-| **Total** | **16 065** | **387** | **12** | **37 / 37** | **25 / 25** | |
+| **Total** | **16 065** | **418** | **12** | **37 / 37** | **25 / 25** | |
 
 **Implementation completeness:** 37/37 REQ-F + 25/25 REQ-NF = **62/62 (100 %)** unit-implemented or governance-satisfied.
 
@@ -163,8 +163,9 @@ The five workspace crates map onto the IEEE 802.1X-2020 protocol entities as fol
 | `no_std` build CI gate for `pae` (REQ-NF-PORT-002) | Low | #142 (TEST-VV-004) |
 | Fuzz harness for `EapolFrame` / `EapPacket` / `Mkpdu` decoders | Medium | #143 (TEST-VV-005) |
 | `clippy::unwrap_used` / `expect_used` workspace lint | Low | #144 (TEST-VV-006) |
-| Security review batch for #37, #50, #51, #59, #68–#72, #86 | Medium | `docs/TODO.md` P5.1 |
-| YANG management scope decision | Info | `docs/TODO.md` P5.3 |
+| YANG management scope decision | Info — deferred to v1.x per `08-transition/yang-deferral.md` | `docs/TODO.md` P5.3 |
+
+> **Security hardening batch closed 2026-06-21.** All 6 P5.1 security-review trackers (#150–#155) landed via PRs #159, #160, #161, #162, #163, #164. No longer an open gap.
 
 ---
 
