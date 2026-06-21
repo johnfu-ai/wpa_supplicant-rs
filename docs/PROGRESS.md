@@ -140,7 +140,7 @@ The five workspace crates map onto the IEEE 802.1X-2020 protocol entities as fol
 
 | Concern | Posture | Evidence |
 |---|---|---|
-| `unsafe` discipline | ✅ 1 documented `unsafe` in `wpa-supplicant/src/systemd.rs:42` with `// SAFETY:` comment at `:40` | `grep -rn 'unsafe' crates/ \| grep -v SAFETY` |
+| `unsafe` discipline | ✅ 19 `unsafe` blocks, all in allowlist (`systemd.rs`, `raw_socket.rs`) with `// SAFETY:`; CI-gated by `scripts/check_unsafe_safety.py` + `cargo geiger` totals (#141) | `unsafe-discipline` CI job |
 | `.unwrap()` in production | ✅ 0 un-justified; `clippy::unwrap_used` + `clippy::expect_used` gated at `warn` (CI `-D warnings`) per #144 / TEST-VV-006; 2 fatal-init `.expect()` in `main.rs` allow-listed; tests exempt | crate-root `#![warn]` + CI clippy step |
 | `no_std` capability | ✅ `crates/pae` builds `--no-default-features` and `--no-default-features --features macsec` (REQ-NF-PORT-002) | `cargo build -p pae --no-default-features` |
 | Cross-architecture build | ✅ CI cross-builds every library + binary for `aarch64-unknown-linux-gnu` (REQ-NF-PORT-001) | `.github/workflows/ci.yml` `build-aarch64` job |

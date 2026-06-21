@@ -153,7 +153,7 @@ Both live one level above this project at `/home/john/wpa_rs/`. They are the **o
 ## 8. Cross-cutting non-negotiables
 
 - **No `unwrap()` in production code** — use `?`, `expect("reason")`, or proper error handling (`SKILL/instructions/root.instructions.md:447`). Gated workspace-wide: each crate root enables `clippy::unwrap_used` + `clippy::expect_used` at `warn` (CI `-D warnings` fails on any new occurrence); test modules are exempt via `#![cfg_attr(test, allow(...))]` (#144 / TEST-VV-006). The two `main.rs` fatal-init `.expect()` calls are allow-listed with justification.
-- **No `unsafe` without a `// SAFETY:` comment** — one documented case in `crates/wpa-supplicant/src/systemd.rs:42` (`docs/PROGRESS.md:143`).
+- **No `unsafe` without a `// SAFETY:` comment** — `unsafe` blocks are confined to an allowlist (`systemd.rs`, `raw_socket.rs`) and must carry a `// SAFETY:` comment within the preceding 10 lines; enforced in CI by `scripts/check_unsafe_safety.py` (#141 / TEST-VV-003, REQ-NF-SEC-001). `cargo geiger` surfaces usage totals.
 - **Trait-based dependency injection** for state machines (mockable for tests). Example: `pae::Rng`, `wpa-supplicant::NetworkIo`.
 - **Feature-gate optional 802.1X-2020 surface** — `#[cfg(feature = "…")]`. EAP methods in `eap-peer` and `macsec` in `pae` are the canonical examples.
 - **Doc comments** cite IEEE clauses; **tests** cite the REQ they exercise (`Verifies: #REQ-F-PAE-001`). New `pub fn` / `pub struct` / `pub trait` / `pub mod` without traceability is a finding.
