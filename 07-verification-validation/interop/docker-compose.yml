@@ -25,24 +25,35 @@ services:
     environment:
       - RADIUS_SRC_PORT=0
     networks:
-      - radius-net
+      radius-net:
+        ipv4_address: 10.5.0.10
     healthcheck:
-      test: freeradius -C
+      # The alpine image ships `radiusd` at /opt/sbin/radiusd (not
+      # `freeradius`, and not on $PATH) — using the wrong name made the
+      # healthcheck exit 127 ("not found") so the container read
+      # `unhealthy` and hostapd's `service_healthy` dependency never
+      # started (#138). `radiusd -C` validates the config.
+      test: /opt/sbin/radiusd -C
       interval: 5s
       retries: 5
+      start_period: 5s
 
   hostapd:
     image: alpine:3.20
     container_name: wpa-sup-hostapd
+    # NOTE: `command: >` folds the script to a single line, so an inline
+    # `#` comment would comment out the rest of the line (and the closing
+    # quote) → "unexpected end of file". Keep the script comment-free;
+    # explanatory notes live in YAML comments like this one. hostapd wired
+    # mode needs a bridge interface (br0) enslaving eth0.
     command: >
       sh -c "
       apk add --no-cache hostapd iptables iproute2 &&
       ip link set eth0 up &&
-      # hostapd needs a bridge interface for wired mode
       ip link add br0 type bridge &&
       ip link set eth0 master br0 &&
       ip link set br0 up &&
-      hostapd /etc/hostapd/hostapd.conf -dd
+      hostapd -dd /etc/hostapd/hostapd.conf
       "
     cap_add:
       - NET_ADMIN
@@ -59,6 +70,12 @@ services:
 networks:
   radius-net:
     internal: true
+    # Static subnet so hostapd (which parses RADIUS server addresses as
+    # literal IPs, no DNS) can target the FreeRADIUS container at
+    # 10.5.0.10 (#138).
+    ipam:
+      config:
+        - subnet: 10.5.0.0/24
   eapol-net:
     # The test runner attaches the supplicant container to this
     # bridge L2 network so EAPOL frames flow between the binary
