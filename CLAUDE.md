@@ -152,7 +152,7 @@ Both live one level above this project at `/home/john/wpa_rs/`. They are the **o
 
 ## 8. Cross-cutting non-negotiables
 
-- **No `unwrap()` in production code** — use `?`, `expect("reason")`, or proper error handling (`SKILL/instructions/root.instructions.md:447`). Three documented residuals exist on demonstrably-infallible constructions; new ones are findings.
+- **No `unwrap()` in production code** — use `?`, `expect("reason")`, or proper error handling (`SKILL/instructions/root.instructions.md:447`). Gated workspace-wide: each crate root enables `clippy::unwrap_used` + `clippy::expect_used` at `warn` (CI `-D warnings` fails on any new occurrence); test modules are exempt via `#![cfg_attr(test, allow(...))]` (#144 / TEST-VV-006). The two `main.rs` fatal-init `.expect()` calls are allow-listed with justification.
 - **No `unsafe` without a `// SAFETY:` comment** — one documented case in `crates/wpa-supplicant/src/systemd.rs:42` (`docs/PROGRESS.md:143`).
 - **Trait-based dependency injection** for state machines (mockable for tests). Example: `pae::Rng`, `wpa-supplicant::NetworkIo`.
 - **Feature-gate optional 802.1X-2020 surface** — `#[cfg(feature = "…")]`. EAP methods in `eap-peer` and `macsec` in `pae` are the canonical examples.

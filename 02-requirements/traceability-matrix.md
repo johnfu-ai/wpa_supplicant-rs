@@ -137,7 +137,7 @@ Previous editions: 2026-06-06 (Phase 05 implementation refresh per `docs/TODO.md
 | REQ | Issue | Closing Commit | Evidence | Tests / Gates | Status |
 |---|---|---|---|---|---|
 | REQ-NF-SEC-001 No Unsafe w/o Justification | #52 | (governance) | One `unsafe { … }` in `crates/wpa-supplicant/src/systemd.rs:42` with `// SAFETY:` comment at `:40` | clippy `-D warnings`; periodic `cargo geiger` review | Implemented (1 documented `unsafe`) |
-| REQ-NF-SEC-002 No `unwrap()` in production | #53 | (governance) | Audit: 3 residual `.unwrap()` calls in non-test paths, all on demonstrably-infallible constructions; tests use `.unwrap()` freely | clippy lint; manual review | Implemented |
+| REQ-NF-SEC-002 No `unwrap()` in production | #53 | (governance) | 0 un-justified `.unwrap()`/`.expect()` in production. Each crate root enables `clippy::unwrap_used` + `clippy::expect_used` at `warn`; CI fails on any new occurrence (`cargo clippy --workspace --all-features --all-targets -- -D warnings`). Test modules exempt via `#![cfg_attr(test, allow(...))]`. 2 fatal-init `.expect()` in `main.rs` allow-listed with justification (#144). | clippy `-D warnings` gate (CI) | Implemented + CI-gated (#144) |
 | REQ-NF-SEC-003 Secret Zeroization | #54 | (governance) | `zeroize::Zeroize` applied to CAK/SAK/KEK/ICK material in `crates/pae/src/mka.rs`; `Zeroizing<Vec<u8>>` on `TlsClientConfig::private_key` in `crates/eap-peer/src/peer.rs` (#152); `Psk` newtype with `Zeroizing<String>` + redacting `Debug` on `MacsecConfig::psk` in `crates/wpa-supplicant/src/config.rs` (#151) | review gate | Implemented |
 | REQ-NF-SEC-004 Clean-Room Compliance | #55 | (governance) | No copyrighted text reproduced; clause references only. **Phase 07 verification record landed at `07-verification-validation/clean-room-review.md` (this PR)** with 35/35 production source files carrying the explicit clean-room disclaimer. | manual code review | Implemented + V&V record landed |
 | REQ-NF-SEC-005 No Copyright Reproduction | #56 | (governance) | `CLAUDE.md` rule; clause-number-only doc comments verified across all 16 k LoC | manual review + grep | Implemented |
@@ -240,7 +240,7 @@ Previous editions: 2026-06-06 (Phase 05 implementation refresh per `docs/TODO.md
 | CI `cargo geiger` gate for REQ-NF-SEC-001 | Low | `unsafe` block count tracked manually | Add geiger + grep-based `// SAFETY:` adjacency check | #141 (TEST-VV-003) |
 | CI `no_std` build gate for REQ-NF-PORT-002 | Low | `pae --no-default-features` builds locally; no CI step | Add to `.github/workflows/ci.yml` | #142 (TEST-VV-004) |
 | Fuzz harness for REQ-NF-REL-001/002 | Medium | Three decoders (`EapolFrame`, `EapPacket`, `Mkpdu`) have no fuzz coverage | Add `cargo fuzz` targets | #143 (TEST-VV-005) |
-| `clippy::unwrap_used` not enabled | Low | 3 documented residuals; new `.unwrap()` not gated | Enable clippy lint workspace-wide | #144 (TEST-VV-006) |
+| `clippy::unwrap_used` not enabled | Closed | `clippy::unwrap_used` + `clippy::expect_used` enabled at `warn` in every crate root; CI `--all-features --all-targets -D warnings` enforces; 3 prior `Mutex::lock().unwrap()` residuals eliminated, `main.rs` fatal-init `.expect()` allow-listed | (closed) | #144 (TEST-VV-006) |
 | Security review of recent feature batch | Medium | `/security-review` overdue for #37, #50, #51, #59, #68–#72, #86 | Run `SKILL/prompts/security-review.prompt.md` | `docs/TODO.md` P5.1 |
 
 ## IEEE 802.1X-2020 Clause Coverage

@@ -295,17 +295,19 @@ impl<N: NetworkIo + 'static> Supplicant<N> {
         // `MkaSakInstalled { sak_key, sak_an }`). Forward each
         // through `dispatch_event` so the Cl.9 / Cl.10 path closes
         // (INT-005 #113 wired the downstream dispatch).
-        if link_up && self.mka.is_some() {
-            let mka_events = match self.mka.as_mut().expect("Some checked above").step() {
-                Ok(ev) => ev,
-                Err(e) => {
-                    tracing::warn!(error = %e, "MKA step error");
-                    Vec::new()
-                }
-            };
-            for ev in mka_events {
-                if let Err(e) = self.dispatch_event(ev) {
-                    tracing::warn!(error = %e, "MKA event dispatch error");
+        if link_up {
+            if let Some(mka) = self.mka.as_mut() {
+                let mka_events = match mka.step() {
+                    Ok(ev) => ev,
+                    Err(e) => {
+                        tracing::warn!(error = %e, "MKA step error");
+                        Vec::new()
+                    }
+                };
+                for ev in mka_events {
+                    if let Err(e) = self.dispatch_event(ev) {
+                        tracing::warn!(error = %e, "MKA event dispatch error");
+                    }
                 }
             }
         }

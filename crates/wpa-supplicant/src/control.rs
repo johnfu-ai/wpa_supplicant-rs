@@ -168,8 +168,13 @@ impl UnixControl {
     fn accept_commands(&self) -> Result<()> {
         loop {
             let stream = {
-                // Held for the accept call only.
-                let listener_guard = self.listener.lock().unwrap();
+                // Held for the accept call only. These internal mutexes
+                // (`listener`, `pending`) are never poisoned in practice —
+                // no critical section panics while holding them — so the
+                // `Mutex::lock` `Result` is a demonstrably-infallible
+                // construction (documented residual per #144 /
+                // REQ-NF-SEC-002). Recover the guard rather than `.unwrap()`.
+                let listener_guard = self.listener.lock().unwrap_or_else(|e| e.into_inner());
                 let Some(listener) = listener_guard.as_ref() else {
                     return Ok(());
                 };
@@ -206,7 +211,7 @@ impl UnixControl {
         // connection bounds both surfaces.
         let total_cap = (MAX_COMMAND_LINE_BYTES * MAX_LINES_PER_CONNECTION) as u64;
         let reader = std::io::BufReader::new(std::io::Read::take(stream, total_cap));
-        let mut pending = self.pending.lock().unwrap();
+        let mut pending = self.pending.lock().unwrap_or_else(|e| e.into_inner());
         let mut count = 0usize;
         for line in reader.lines() {
             count += 1;
@@ -240,7 +245,7 @@ impl UnixControl {
 impl ControlInterface for UnixControl {
     fn poll_command(&self) -> Result<Option<ControlCommand>> {
         self.accept_commands()?;
-        let mut pending = self.pending.lock().unwrap();
+        let mut pending = self.pending.lock().unwrap_or_else(|e| e.into_inner());
         Ok(pending.pop())
     }
 
