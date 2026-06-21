@@ -161,7 +161,7 @@ Previous editions: 2026-06-06 (Phase 05 implementation refresh per `docs/TODO.md
 
 | REQ | Issue | Closing Commit | Evidence | Gates | Status |
 |---|---|---|---|---|---|
-| REQ-NF-MNT-001 Test Coverage ≥ 80% | #62 | (governance) | 393 tests across 16 065 LoC; per-crate ratios in `docs/PROGRESS.md` | `cargo llvm-cov` (CI addition — see `docs/TODO.md` P5.2) | Implemented; CI coverage gate pending |
+| REQ-NF-MNT-001 Test Coverage ≥ 80% | #62 | (governance) | 418 tests; per-crate line coverage all ≥ 80% (pae 88.1%, eapol-supp 88.1%, eap-peer 86.6%, logon 94.4%, wpa-supplicant 84.5%) — see `docs/TESTING.md` | `coverage` CI job: `cargo llvm-cov` + `scripts/check_coverage.py` per-crate gate (#139) | Implemented + CI-gated (#139) |
 | REQ-NF-MNT-002 Public API Documentation | #63 | (governance) | All public items carry `///` doc comments; `cargo doc --workspace --no-deps` clean | manual review | Implemented |
 | REQ-NF-MNT-003 Clippy Clean | #64 | (governance) `20ac334`, `826ad8a` | `cargo clippy --workspace --all-targets -- -D warnings` passes; CI enforces | CI gate | Implemented |
 | REQ-NF-MNT-004 Format Compliant | #65 | (governance) | `cargo fmt --all -- --check` passes; CI enforces | CI gate | Implemented |
@@ -235,7 +235,7 @@ Previous editions: 2026-06-06 (Phase 05 implementation refresh per `docs/TODO.md
 | FreeRADIUS interop *handshake* depth | Info | P3.1 harness landed (PR #137) — infra ready; full EAP-TLS / PEAP / TEAP handshake assertions require a method factory loading PEM-based TLS engines from `EapMethodConfig` | Implement #133 (EAP method factory) | #133, `docs/TODO.md` P3.1 |
 | MKA SAK install end-to-end | Closed | Adapter wired (#129 PR #136); AES Key Wrap (RFC 3394) for `unwrap_sak` landed in PR #146 (#135). End-to-end wrapped-SAK MKPDU → unwrap → CP→Secured covered by `crates/wpa-supplicant/tests/aes_key_wrap_sak.rs`. | (closed) | #135, PR #146 |
 | FreeRADIUS CI auto-trigger | Info | Workflow is `workflow_dispatch`-only — FreeRADIUS container exits 1 on boot in GitHub Actions sandbox; needs container-log capture to debug | Debug FreeRADIUS config | #138 |
-| CI coverage gate for REQ-NF-MNT-001 | Low | 387 tests exist; no automated `cargo llvm-cov` ≥ 80 % gate in CI | Add `cargo llvm-cov` step | #139 (TEST-VV-001), `docs/TODO.md` P5.2 |
+| CI coverage gate for REQ-NF-MNT-001 | Closed | `coverage` CI job runs `cargo llvm-cov --workspace --lcov` + `scripts/check_coverage.py` per-crate 80% gate; HTML report uploaded as artifact. Baselines in `docs/TESTING.md` | (closed) | #139 (TEST-VV-001) |
 | CI `cargo audit` / `cargo deny` gates | Closed | Supply-chain CI gate landed: `supply-chain` job in `.github/workflows/ci.yml` runs `cargo audit --deny warnings` + `cargo deny --all-features check`. Policy at `deny.toml`. Public summary at `docs/SECURITY.md`. | (closed) | #140 (TEST-VV-002), `docs/TODO.md` P5.2 |
 | CI `cargo geiger` gate for REQ-NF-SEC-001 | Closed | `unsafe-discipline` CI job runs `scripts/check_unsafe_safety.py` (allowlist + `// SAFETY:` adjacency hard gate) + `cargo geiger` totals (informational) | (closed) | #141 (TEST-VV-003) |
 | CI `no_std` build gate for REQ-NF-PORT-002 | Low | `pae --no-default-features` builds locally; no CI step | Add to `.github/workflows/ci.yml` | #142 (TEST-VV-004) |

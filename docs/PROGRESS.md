@@ -143,6 +143,7 @@ The five workspace crates map onto the IEEE 802.1X-2020 protocol entities as fol
 | `unsafe` discipline | ✅ 19 `unsafe` blocks, all in allowlist (`systemd.rs`, `raw_socket.rs`) with `// SAFETY:`; CI-gated by `scripts/check_unsafe_safety.py` + `cargo geiger` totals (#141) | `unsafe-discipline` CI job |
 | `.unwrap()` in production | ✅ 0 un-justified; `clippy::unwrap_used` + `clippy::expect_used` gated at `warn` (CI `-D warnings`) per #144 / TEST-VV-006; 2 fatal-init `.expect()` in `main.rs` allow-listed; tests exempt | crate-root `#![warn]` + CI clippy step |
 | `no_std` capability | ✅ `crates/pae` builds `--no-default-features` and `--no-default-features --features macsec` (REQ-NF-PORT-002) | `cargo build -p pae --no-default-features` |
+| Test coverage | ✅ All crates ≥ 80% line coverage (pae 88.1%, eapol-supp 88.1%, eap-peer 86.6%, logon 94.4%, wpa-supplicant 84.5%); CI-gated per-crate by `scripts/check_coverage.py` (#139) | `coverage` CI job; baselines in `docs/TESTING.md` |
 | Cross-architecture build | ✅ CI cross-builds every library + binary for `aarch64-unknown-linux-gnu` (REQ-NF-PORT-001) | `.github/workflows/ci.yml` `build-aarch64` job |
 | Clippy clean | ✅ `cargo clippy --workspace --all-targets -- -D warnings` passes; CI enforces | `.github/workflows/ci.yml` |
 | Format clean | ✅ `cargo fmt --all -- --check` passes; CI enforces | `.github/workflows/ci.yml` |

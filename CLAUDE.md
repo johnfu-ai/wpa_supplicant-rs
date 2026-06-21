@@ -25,7 +25,10 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt   --all -- --check
 cargo doc   --workspace --no-deps
 cargo deny  check                                # Supply-chain gate (advisories, licenses, bans, sources) — CI gates this
+cargo llvm-cov --workspace --lcov --output-path lcov.info && python3 scripts/check_coverage.py lcov.info   # Per-crate ≥80% coverage gate (REQ-NF-MNT-001 / #139)
 ```
+
+CI also runs an `unsafe`-discipline gate (`scripts/check_unsafe_safety.py` + `cargo geiger`, #141) and a `coverage` job. See `docs/TESTING.md` for the full gate inventory and per-crate baselines.
 
 No-std variants (`pae` only — REQ-NF-PORT-002):
 ```bash

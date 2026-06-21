@@ -117,3 +117,43 @@ jobs:
       - name: cargo geiger (totals, informational)
         run: cargo geiger --workspace --output-format Ascii
         continue-on-error: true
+
+  coverage:
+    # Implements: issue #139 (TEST-VV-001).
+    # Verifies: REQ-NF-MNT-001 (#62) — test coverage >= 80% per crate.
+    name: Coverage (llvm-cov >= 80% per crate)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: coverage
+      - name: Install cargo-llvm-cov (prebuilt)
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-llvm-cov
+      # Collect coverage over the default-feature test suite (the 418
+      # non-ignored unit/integration tests). Feature-gated code
+      # (`raw_socket.rs`, `macsec`) is covered by feature-specific tests
+      # and is out of scope for this default-feature gate.
+      - name: cargo llvm-cov (lcov)
+        run: cargo llvm-cov --workspace --lcov --output-path lcov.info
+      # Hard gate: fail if any crate falls below its per-crate floor
+      # (80% by default; see scripts/check_coverage.py THRESHOLDS).
+      - name: Per-crate 80% gate
+        run: python3 scripts/check_coverage.py lcov.info
+      # HTML report for reviewer diffing (reuses the collected profdata;
+      # does not re-run tests).
+      - name: cargo llvm-cov report (HTML)
+        run: cargo llvm-cov report --html --output-dir coverage
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: |
+            coverage/
+            lcov.info
+          if-no-files-found: error
