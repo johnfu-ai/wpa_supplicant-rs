@@ -548,7 +548,7 @@ impl<N: NetworkIo + 'static> Supplicant<N> {
 
     /// The cipher suite of the constructed MKA participant, if any.
     ///
-    /// Per #176 / REQ-F-CP-002: reflects `config.macsec.cipher_suite`
+    /// Per #176 / REQ-F-CP-004 / REQ-F-MKA-005: reflects `config.macsec.cipher_suite`
     /// (mapped onto `pae::CipherSuite` per Cl.9.7). Test bridge —
     /// `state()` does not surface the cipher suite.
     pub fn mka_cipher_suite(&self) -> Option<CipherSuite> {
@@ -566,7 +566,7 @@ impl<N: NetworkIo + 'static> Supplicant<N> {
 
         // Build the adapter (`MkaContext` impl) and the participant.
         // Cipher suite comes from `config.macsec.cipher_suite`, mapped
-        // onto `pae::CipherSuite` per Cl.9.7 (#176 / REQ-F-CP-002);
+        // onto `pae::CipherSuite` per Cl.9.7 (#176 / REQ-F-CP-004 / REQ-F-MKA-005);
         // unknown values were already rejected at config load.
         let cipher_suite = self.config.macsec.resolve_cipher_suite()?;
         let adapter = MkaParticipantAdapter::new(Arc::clone(&self.network));

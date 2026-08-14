@@ -1,7 +1,7 @@
 //! Integration tests for #176 / F-EAP-3 — `config.macsec.cipher_suite`
 //! → `pae::CipherSuite` mapping at MKA construction.
 //!
-//! Verifies: #176 (REQ-F-CP-002, issue #30)
+//! Verifies: #176 (REQ-F-CP-004 #32 / REQ-F-MKA-005 #23)
 //! Per IEEE 802.1X-2020 Cl.9.7 (cipher suites), Cl.6.2.2 (CAK from MSK).
 //! Architecture: ADR-SM-002 (#74).
 
@@ -137,9 +137,9 @@ fn drive_to_mka(supp: &mut Supplicant<Arc<TestNet>>, net: &TestNet) -> Result<()
     Ok(())
 }
 
-/// Verifies: #176 (REQ-F-CP-002)
+/// Verifies: #176 (REQ-F-CP-004 #32 / REQ-F-MKA-005 #23)
 /// `cipher_suite = "gcm-aes-256"` in the config TOML must produce an
-/// MKA participant negotiated for `GcmAes256` per Cl.9.7 — not be
+/// MKA participant constructed with `GcmAes256` per Cl.9.7 — not be
 /// silently ignored in favor of the GcmAes128 default.
 #[test]
 fn test_mka_cipher_suite_256_from_config() {
@@ -157,7 +157,7 @@ fn test_mka_cipher_suite_256_from_config() {
     );
 }
 
-/// Verifies: #176 (REQ-F-CP-002)
+/// Verifies: #176 (REQ-F-CP-004 #32 / REQ-F-MKA-005 #23)
 /// The default (`gcm-aes-128`) still maps to `GcmAes128`.
 #[test]
 fn test_mka_cipher_suite_default_128() {

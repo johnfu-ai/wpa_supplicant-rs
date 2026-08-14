@@ -136,7 +136,7 @@ impl Default for MacsecConfig {
 impl MacsecConfig {
     /// Map the configured `cipher_suite` string onto the
     /// [`pae::CipherSuite`] enum per IEEE 802.1X-2020 Cl.9.7 (#176 /
-    /// REQ-F-CP-002). Callers should have already rejected unknown
+    /// REQ-F-CP-004 / REQ-F-MKA-005). Callers should have already rejected unknown
     /// values at config load ([`Config::validate`]).
     ///
     /// # Errors
@@ -667,7 +667,7 @@ dbus_name = "org.example.wpa"
         assert_eq!(config.control.dbus_name.as_deref(), Some("org.example.wpa"));
     }
 
-    /// Verifies: #176 (REQ-F-CP-002)
+    /// Verifies: #176 (REQ-F-CP-004 #32 / REQ-F-MKA-005 #23)
     /// An unknown `macsec.cipher_suite` value is rejected at config
     /// load with a clear error — never silently defaulted.
     #[test]
