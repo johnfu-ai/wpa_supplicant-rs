@@ -16,10 +16,13 @@ Previous editions: 2026-06-06 (Phase 05 implementation refresh per `docs/TODO.md
 > - 6 TEST-VV-NNN gap issues filed (#139–#144) covering CI-level
 >   verification gaps for REQ-NF-MNT-001, REQ-NF-SEC-001/002, REQ-NF-REL-001/002,
 >   REQ-NF-PORT-002, and supply-chain hygiene.
-> - 3 follow-up issues filed: #133 (EAP method factory), #135 (AES Key Wrap
->   RFC 3394), #138 (FreeRADIUS CI debug). These do not block the Phase 07
->   gate — see `07-verification-validation/phase-gate-report.md` for the
->   APPROVED rationale and conditional re-arms.
+> - 3 follow-up issues filed at Phase 07 close: #133 (EAP method factory),
+>   #135 (AES Key Wrap RFC 3394), #138 (FreeRADIUS CI debug). **#135 closed
+>   by PR #146 (2026-06-09); #133 landed 2026-08-14** (factory + rustls engine
+>   wired into `Supplicant`; live FreeRADIUS handshake validation is the
+>   remaining follow-up F-INT-1 in `docs/IMPROVEMENTS.md`). See
+>   `07-verification-validation/phase-gate-report.md` for the APPROVED
+>   rationale and conditional re-arms.
 
 ## StR → REQ-F/REQ-NF Matrix
 
@@ -107,9 +110,9 @@ Previous editions: 2026-06-06 (Phase 05 implementation refresh per `docs/TODO.md
 | REQ | Issue | Closing Commit | Code | Tests | Status |
 |---|---|---|---|---|---|
 | REQ-F-EAP-001 EAP Peer Framework | #38 | `3ef5b0b` | `crates/eap-peer/src/peer.rs`, `…/lib.rs` | 26 tests in `peer.rs` | Implemented |
-| REQ-F-EAP-002 EAP-TLS | #39 | `b39c99e` | `crates/eap-peer/src/eap_tls.rs` | 12 dedicated tests | Implemented unit + bridge wired (#130 PR #134); **full interop pending #133** (EAP method factory from `EapMethodConfig` + PEM) |
-| REQ-F-EAP-003 PEAP | #40 | `ae0d9d2` | `crates/eap-peer/src/eap_peap.rs` | 11 dedicated tests | Implemented unit + bridge wired (#130 PR #134); **full interop pending #133** |
-| REQ-F-EAP-004 TEAP | #41 | `9af95f3` | `crates/eap-peer/src/eap_teap.rs` | 12 dedicated tests | Implemented unit + bridge wired (#130 PR #134); **full interop pending #133** |
+| REQ-F-EAP-002 EAP-TLS | #39 | `b39c99e` | `crates/eap-peer/src/eap_tls.rs`, `crates/wpa-supplicant/src/method_factory.rs`, `…/rustls_engine.rs` | 12 dedicated tests + 6 factory/engine tests + `tests/method_factory.rs` | Implemented unit + bridge wired (#130 PR #134) + **method factory landed** (#133: PEM-loaded rustls engine drives a real TLS 1.2 handshake validated by a loopback test; `Supplicant::new` wires it in). Live FreeRADIUS handshake validation is follow-up F-INT-1 (`docs/IMPROVEMENTS.md`). |
+| REQ-F-EAP-003 PEAP | #40 | `ae0d9d2` | `crates/eap-peer/src/eap_peap.rs`, `crates/wpa-supplicant/src/method_factory.rs` | 11 dedicated tests + `tests/method_factory.rs` | Implemented unit + bridge wired (#130 PR #134) + **method factory landed** (#133: PEAP outer tunnel + recursive inner method from `EapMethodConfig`). Live handshake validation is follow-up F-INT-1. |
+| REQ-F-EAP-004 TEAP | #41 | `9af95f3` | `crates/eap-peer/src/eap_teap.rs`, `crates/wpa-supplicant/src/method_factory.rs` | 12 dedicated tests + `tests/method_factory.rs` | Implemented unit + bridge wired (#130 PR #134) + **method factory landed** (#133: TEAP machine-only auth with optional client cert). Live handshake validation is follow-up F-INT-1. |
 | REQ-F-EAP-005 Mutual Authentication | #42 | `9a518d6` | `crates/eap-peer/src/peer.rs` | 4 dedicated tests | Implemented |
 | REQ-F-EAP-006 Key Derivation for MKA | #43 | `137f9b1`, `628c39e` | `crates/eap-peer/src/key_derivation.rs`, `crates/wpa-supplicant/src/supplicant.rs::try_construct_mka` | 7 dedicated tests + integration in `tests/mka_participant.rs` | Implemented + wired end-to-end (#129 PR #136) |
 
@@ -232,9 +235,9 @@ Previous editions: 2026-06-06 (Phase 05 implementation refresh per `docs/TODO.md
 
 | Gap | Severity | Description | Action | Tracked in |
 |---|---|---|---|---|
-| FreeRADIUS interop *handshake* depth | Info | P3.1 harness landed (PR #137) — infra ready; full EAP-TLS / PEAP / TEAP handshake assertions require a method factory loading PEM-based TLS engines from `EapMethodConfig` | Implement #133 (EAP method factory) | #133, `docs/TODO.md` P3.1 |
+| FreeRADIUS interop *handshake* depth | Info → **factory landed** | P3.1 harness landed (PR #137) + **method factory landed (#133, 2026-08-14)** — PEM-loaded rustls engine drives a real TLS 1.2 handshake (loopback test). Remaining: full live-stack EAP-TLS/PEAP/TEAP handshake assertions against FreeRADIUS (follow-up F-INT-1) | F-INT-1 (`docs/IMPROVEMENTS.md`) | #133 ✅, `docs/TODO.md` P3.1 |
 | MKA SAK install end-to-end | Closed | Adapter wired (#129 PR #136); AES Key Wrap (RFC 3394) for `unwrap_sak` landed in PR #146 (#135). End-to-end wrapped-SAK MKPDU → unwrap → CP→Secured covered by `crates/wpa-supplicant/tests/aes_key_wrap_sak.rs`. | (closed) | #135, PR #146 |
-| FreeRADIUS CI auto-trigger | Closed | FreeRADIUS + hostapd now boot cleanly in CI (#138 fixed: `CA_file`→`ca_file`, 2048-bit DH, PEAP `virtual_server`, `radiusd -C` healthcheck, hostapd `eapol_version`/static-IP/arg-order). Workflow stays `workflow_dispatch`-only until #133 enables full handshake assertions | (closed) | #138 |
+| FreeRADIUS CI auto-trigger | Closed | FreeRADIUS + hostapd now boot cleanly in CI (#138 fixed: `CA_file`→`ca_file`, 2048-bit DH, PEAP `virtual_server`, `radiusd -C` healthcheck, hostapd `eapol_version`/static-IP/arg-order). Workflow stays `workflow_dispatch`-only; #133 landed 2026-08-14 so the factory is wired, and auto-trigger re-arm now gates on F-INT-1 (live-stack handshake validation) rather than on the factory | (closed) | #138 |
 | CI coverage gate for REQ-NF-MNT-001 | Closed | `coverage` CI job runs `cargo llvm-cov --workspace --lcov` + `scripts/check_coverage.py` per-crate 80% gate; HTML report uploaded as artifact. Baselines in `docs/TESTING.md` | (closed) | #139 (TEST-VV-001) |
 | CI `cargo audit` / `cargo deny` gates | Closed | Supply-chain CI gate landed: `supply-chain` job in `.github/workflows/ci.yml` runs `cargo audit --deny warnings` + `cargo deny --all-features check`. Policy at `deny.toml`. Public summary at `docs/SECURITY.md`. | (closed) | #140 (TEST-VV-002), `docs/TODO.md` P5.2 |
 | CI `cargo geiger` gate for REQ-NF-SEC-001 | Closed | `unsafe-discipline` CI job runs `scripts/check_unsafe_safety.py` (allowlist + `// SAFETY:` adjacency hard gate) + `cargo geiger` totals (informational) | (closed) | #141 (TEST-VV-003) |

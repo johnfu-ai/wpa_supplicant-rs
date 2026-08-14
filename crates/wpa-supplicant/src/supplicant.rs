@@ -15,7 +15,7 @@ use std::time::Instant;
 
 use anyhow::Result;
 use eap_peer::key_derivation::derive_cak_from_msk;
-use eap_peer::peer::EapMethod;
+use eap_peer::peer::{EapMethod, TlsClientConfig};
 use eapol_supp::frame::{EapolFrame, EapolPacketType};
 use eapol_supp::{PaeState, SupplicantPae};
 use pae::{
@@ -125,6 +125,29 @@ pub struct Supplicant<N: NetworkIo + 'static> {
     shutdown: Arc<AtomicBool>,
 }
 
+/// Resolve the EAP method list + TLS client config from
+/// [`EapMethodConfig`], loading PEM material via the method factory
+/// (#133). A missing or unreadable PEM file fails fast here — the
+/// daemon never starts with a bad config.
+#[cfg(feature = "eap-tls-rustls")]
+fn resolve_eap_methods(config: &Config) -> Result<(Vec<Box<dyn EapMethod>>, TlsClientConfig)> {
+    let output = crate::method_factory::build_methods(&config.eap.method)?;
+    tracing::info!(
+        method_count = output.methods.len(),
+        "EAP methods loaded from config via method factory (#133)"
+    );
+    Ok((output.methods, output.tls_config))
+}
+
+/// Resolve the EAP method list + TLS client config when the method
+/// factory is not compiled in: no methods and a placeholder
+/// [`TlsClientConfig`]. The peer still handles EAP-Identity /
+/// EAP-Notification natively and routes EAP-Success / EAP-Failure.
+#[cfg(not(feature = "eap-tls-rustls"))]
+fn resolve_eap_methods(_config: &Config) -> Result<(Vec<Box<dyn EapMethod>>, TlsClientConfig)> {
+    Ok((Vec::new(), crate::eap_session::empty_tls_config()))
+}
+
 impl<N: NetworkIo + 'static> Supplicant<N> {
     /// Initialize the supplicant from configuration.
     ///
@@ -139,14 +162,15 @@ impl<N: NetworkIo + 'static> Supplicant<N> {
     /// Per ARC-C-WPA-005 (#85). For control-socket log-level reload
     /// support (INT-009 / #117), use [`Supplicant::with_logging`] instead.
     ///
-    /// The EAP session is constructed with **no methods**. The peer can
-    /// still handle EAP-Identity / EAP-Notification natively and route
-    /// EAP-Success / EAP-Failure into the PAE; method-bearing methods
-    /// (EAP-TLS / PEAP / TEAP) wait on the future method-factory
-    /// follow-up that turns `EapMethodConfig` into a `Vec<Box<dyn
-    /// EapMethod>>`.
+    /// The EAP session is constructed from `EapMethodConfig`: when the
+    /// `eap-tls-rustls` feature is enabled the method factory (#133)
+    /// loads PEM material and builds real EAP-TLS / PEAP / TEAP methods;
+    /// otherwise the session has no methods and the peer only handles
+    /// EAP-Identity / EAP-Notification natively plus EAP-Success /
+    /// EAP-Failure routing.
     pub fn new(config: Config, network: N) -> Result<Self> {
-        Self::build(config, network, None, Vec::new())
+        let (methods, tls_config) = resolve_eap_methods(&config)?;
+        Self::build(config, network, None, methods, tls_config)
     }
 
     /// Initialize the supplicant with a [`Logging`] handle so the
@@ -156,7 +180,36 @@ impl<N: NetworkIo + 'static> Supplicant<N> {
     /// entry point calls this after `Logging::init`; tests inject a
     /// recording handle via [`Logging::from_test_handle`].
     pub fn with_logging(config: Config, network: N, logging: Logging) -> Result<Self> {
-        Self::build(config, network, Some(logging), Vec::new())
+        let (methods, tls_config) = resolve_eap_methods(&config)?;
+        Self::build(config, network, Some(logging), methods, tls_config)
+    }
+
+    /// Initialize the supplicant with a [`Logging`] handle **and** an
+    /// explicit EAP method list, bypassing the method factory.
+    ///
+    /// The test counterpart to [`Supplicant::with_logging`] +
+    /// [`Supplicant::with_eap_methods`]: tests that need runtime log
+    /// reloading (INT-009 / #117) but supply their own methods use this
+    /// so the factory's PEM loading is not triggered.
+    ///
+    /// Hidden from docs: this exists for the in-tree integration tests,
+    /// not for embedders — production callers should use
+    /// [`Supplicant::with_logging`], which routes through the #133
+    /// method factory.
+    #[doc(hidden)]
+    pub fn with_logging_and_methods(
+        config: Config,
+        network: N,
+        logging: Logging,
+        methods: Vec<Box<dyn EapMethod>>,
+    ) -> Result<Self> {
+        Self::build(
+            config,
+            network,
+            Some(logging),
+            methods,
+            crate::eap_session::empty_tls_config(),
+        )
     }
 
     /// Initialize the supplicant with an explicit set of EAP methods
@@ -165,29 +218,39 @@ impl<N: NetworkIo + 'static> Supplicant<N> {
     /// exercise the success / failure paths without a real TLS engine.
     ///
     /// Per #130. Prod callers should use [`Supplicant::new`] /
-    /// [`Supplicant::with_logging`] until the EAP method factory
-    /// (which loads PEM-based TLS engines from
-    /// `EapMethodConfig`) lands.
+    /// [`Supplicant::with_logging`], which load PEM-based TLS engines
+    /// from `EapMethodConfig` via the method factory (#133) when the
+    /// `eap-tls-rustls` feature is enabled.
     pub fn with_eap_methods(
         config: Config,
         network: N,
         methods: Vec<Box<dyn EapMethod>>,
     ) -> Result<Self> {
-        Self::build(config, network, None, methods)
+        // Explicit injection always bypasses the method factory — the
+        // caller controls the method list, so PEM is not loaded and a
+        // placeholder TLS config is used.
+        Self::build(
+            config,
+            network,
+            None,
+            methods,
+            crate::eap_session::empty_tls_config(),
+        )
     }
 
     fn build(
         config: Config,
         network: N,
         logging: Option<Logging>,
-        eap_methods: Vec<Box<dyn EapMethod>>,
+        methods: Vec<Box<dyn EapMethod>>,
+        tls_config: TlsClientConfig,
     ) -> Result<Self> {
         let network = Arc::new(network);
         let link_up = network.link_up();
         let identity = config.eap.identity.as_bytes().to_vec();
         let adapter = SupplicantPaeAdapter::new(Arc::clone(&network), identity.clone());
         let pae = SupplicantPae::new(adapter);
-        let eap = EapSession::new(Arc::clone(&network), identity, eap_methods);
+        let eap = EapSession::new(Arc::clone(&network), identity, methods, tls_config);
         Ok(Self {
             config,
             network,
@@ -858,7 +921,7 @@ ca = "/etc/certs/ca.pem"
     fn test_supplicant_new() {
         let config = make_config();
         let network = crate::network_io::MockNetworkIo::new();
-        let supp = Supplicant::new(config, network);
+        let supp = Supplicant::with_eap_methods(config, network, Vec::new());
         assert!(supp.is_ok());
     }
 
@@ -868,7 +931,7 @@ ca = "/etc/certs/ca.pem"
     fn test_supplicant_shutdown() {
         let config = make_config();
         let network = crate::network_io::MockNetworkIo::new();
-        let mut supp = Supplicant::new(config, network).unwrap();
+        let mut supp = Supplicant::with_eap_methods(config, network, Vec::new()).unwrap();
         assert!(!supp.is_shutdown());
         supp.shutdown();
         assert!(supp.is_shutdown());
@@ -880,7 +943,7 @@ ca = "/etc/certs/ca.pem"
     fn test_supplicant_tick_no_frames() {
         let config = make_config();
         let network = crate::network_io::MockNetworkIo::new();
-        let mut supp = Supplicant::new(config, network).unwrap();
+        let mut supp = Supplicant::with_eap_methods(config, network, Vec::new()).unwrap();
         let events = supp.tick().unwrap();
         assert!(events.is_empty());
     }
@@ -891,7 +954,7 @@ ca = "/etc/certs/ca.pem"
     fn test_supplicant_command_shutdown() {
         let config = make_config();
         let network = crate::network_io::MockNetworkIo::new();
-        let mut supp = Supplicant::new(config, network).unwrap();
+        let mut supp = Supplicant::with_eap_methods(config, network, Vec::new()).unwrap();
         assert!(!supp.is_shutdown());
         supp.handle_command(ControlCommand::Shutdown).unwrap();
         assert!(supp.is_shutdown());
@@ -903,7 +966,7 @@ ca = "/etc/certs/ca.pem"
     fn test_supplicant_state_serializable() {
         let config = make_config();
         let network = crate::network_io::MockNetworkIo::new();
-        let supp = Supplicant::new(config, network).unwrap();
+        let supp = Supplicant::with_eap_methods(config, network, Vec::new()).unwrap();
         let state = supp.state();
         let json = serde_json::to_string(&state).unwrap();
         assert!(json.contains("disabled"));
@@ -915,7 +978,7 @@ ca = "/etc/certs/ca.pem"
     fn test_supplicant_run_exits_on_shutdown() {
         let config = make_config();
         let network = crate::network_io::MockNetworkIo::new();
-        let mut supp = Supplicant::new(config, network).unwrap();
+        let mut supp = Supplicant::with_eap_methods(config, network, Vec::new()).unwrap();
         // Pre-set shutdown so run() exits immediately
         supp.shutdown();
         let result = supp.run();
@@ -931,7 +994,7 @@ ca = "/etc/certs/ca.pem"
     fn test_link_down_disables_cp() {
         let config = make_config();
         let network = crate::network_io::MockNetworkIo::new();
-        let mut supp = Supplicant::new(config, network).unwrap();
+        let mut supp = Supplicant::with_eap_methods(config, network, Vec::new()).unwrap();
 
         // Initially CP is Disabled
         assert_eq!(supp.cp_state(), CpState::Disabled);
@@ -952,7 +1015,7 @@ ca = "/etc/certs/ca.pem"
     fn test_link_up_starts_reconnection() {
         let config = make_config();
         let network = crate::network_io::MockNetworkIo::new();
-        let mut supp = Supplicant::new(config, network).unwrap();
+        let mut supp = Supplicant::with_eap_methods(config, network, Vec::new()).unwrap();
 
         // Simulate link down
         supp.network.set_link(false);
@@ -974,7 +1037,7 @@ ca = "/etc/certs/ca.pem"
     fn test_reconnection_completes_on_secure() {
         let config = make_config();
         let network = crate::network_io::MockNetworkIo::new();
-        let mut supp = Supplicant::new(config, network).unwrap();
+        let mut supp = Supplicant::with_eap_methods(config, network, Vec::new()).unwrap();
 
         // Simulate link down then up
         supp.network.set_link(false);
@@ -1005,7 +1068,7 @@ ca = "/etc/certs/ca.pem"
     fn test_full_link_flap_recovery_within_10s() {
         let config = make_config();
         let network = crate::network_io::MockNetworkIo::new();
-        let mut supp = Supplicant::new(config, network).unwrap();
+        let mut supp = Supplicant::with_eap_methods(config, network, Vec::new()).unwrap();
 
         // 1. Initial: CP Disabled, link up
         assert_eq!(supp.cp_state(), CpState::Disabled);
@@ -1061,7 +1124,7 @@ ca = "/etc/certs/ca.pem"
     fn test_multiple_link_flaps() {
         let config = make_config();
         let network = crate::network_io::MockNetworkIo::new();
-        let mut supp = Supplicant::new(config, network).unwrap();
+        let mut supp = Supplicant::with_eap_methods(config, network, Vec::new()).unwrap();
 
         for _ in 0..3 {
             // Link down

@@ -249,7 +249,7 @@ There is no on-disk database to backup. A clean restore is "drop the cert chain 
 |---|---|---|
 | `0.1.x` → `0.1.(x+1)` | patch | `systemctl stop wpa-supplicant` → swap binary → `systemctl start wpa-supplicant`. No config changes. |
 | `0.x.y` → `0.(x+1).0` | minor | Read the CHANGELOG `Removed` / `Deprecated` / `Changed` sections. Adjust the config if needed. Schema breaks are minor-bump events, never patch. |
-| (future) `0.x` → `1.0` | major | Will carry a dedicated migration appendix. Anticipated breaks: `[eap.tls]` cert handling once #133 ships a real `RustlsEngine`. |
+| (future) `0.x` → `1.0` | major | Will carry a dedicated migration appendix. The #133 EAP method factory landed 2026-08-14 (real rustls engine; `[eap.tls]` PEM loading is live), so the remaining 1.0 gate is one external interop run reaching CP→Secured (follow-up F-INT-1, `docs/IMPROVEMENTS.md`). |
 
 ## 10. Where to file work
 

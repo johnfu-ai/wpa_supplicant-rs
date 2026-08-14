@@ -69,7 +69,7 @@ ca = "/etc/certs/ca.pem"
 fn test_state_json_round_trip_schema_stable() {
     let config = make_config();
     let net = TestNet::new();
-    let supp = Supplicant::new(config, net).unwrap();
+    let supp = Supplicant::with_eap_methods(config, net, Vec::new()).unwrap();
 
     let state = supp.state();
     let json = serde_json::to_string(&state).expect("state must serialize");
@@ -106,7 +106,7 @@ fn test_state_json_round_trip_schema_stable() {
 fn test_state_pae_field_is_live() {
     let config = make_config();
     let net = TestNet::new();
-    let mut supp = Supplicant::new(config, net).unwrap();
+    let mut supp = Supplicant::with_eap_methods(config, net, Vec::new()).unwrap();
 
     // Before stepping, the PAE is Disconnected.
     let json_before = serde_json::to_string(&supp.state()).unwrap();
@@ -138,7 +138,7 @@ fn test_state_pae_field_is_live() {
 fn test_state_logon_fields_default_null_when_unwired() {
     let config = make_config();
     let net = TestNet::new();
-    let supp = Supplicant::new(config, net).unwrap();
+    let supp = Supplicant::with_eap_methods(config, net, Vec::new()).unwrap();
 
     let state: SupplicantState = supp.state();
     assert_eq!(
@@ -173,7 +173,7 @@ fn test_state_logon_fields_default_null_when_unwired() {
 fn test_state_mka_fields_default_when_unwired() {
     let config = make_config();
     let net = TestNet::new();
-    let supp = Supplicant::new(config, net).unwrap();
+    let supp = Supplicant::with_eap_methods(config, net, Vec::new()).unwrap();
 
     let state = supp.state();
     assert!(

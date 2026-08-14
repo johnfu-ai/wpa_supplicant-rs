@@ -27,6 +27,14 @@ mod shutdown;
 mod supplicant;
 #[cfg(feature = "systemd")]
 mod systemd;
+// EAP method factory (#133) — rustls TLS engine + PEM loading.
+// Public so embedders and integration tests can call `build_methods`
+// directly; the `Supplicant` constructors also call it internally when
+// the feature is enabled.
+#[cfg(feature = "eap-tls-rustls")]
+pub mod method_factory;
+#[cfg(feature = "eap-tls-rustls")]
+mod rustls_engine;
 
 pub use config::{
     Config, ControlConfig, ControlType, EapConfig, EapMethodConfig, LoggingConfig, LogonConfig,

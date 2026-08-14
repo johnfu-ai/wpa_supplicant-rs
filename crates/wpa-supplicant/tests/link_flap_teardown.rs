@@ -92,7 +92,7 @@ ca = "/etc/certs/ca.pem"
 fn test_link_down_resets_supplicant_pae() {
     let config = make_config();
     let net = Arc::new(TestNet::new());
-    let mut supp = Supplicant::new(config, Arc::clone(&net)).unwrap();
+    let mut supp = Supplicant::with_eap_methods(config, Arc::clone(&net), Vec::new()).unwrap();
 
     // Drive PAE to Connecting via tick() (INT-003).
     supp.pae_set_authenticate(true);
@@ -120,7 +120,7 @@ fn test_link_down_resets_supplicant_pae() {
 fn test_link_up_after_down_restarts_authentication() {
     let config = make_config();
     let net = Arc::new(TestNet::new());
-    let mut supp = Supplicant::new(config, Arc::clone(&net)).unwrap();
+    let mut supp = Supplicant::with_eap_methods(config, Arc::clone(&net), Vec::new()).unwrap();
 
     supp.pae_set_authenticate(true);
     supp.tick().unwrap();
@@ -166,7 +166,7 @@ fn test_link_up_after_down_restarts_authentication() {
 fn test_link_down_from_authenticating_resets_pae() {
     let config = make_config();
     let net = Arc::new(TestNet::new());
-    let mut supp = Supplicant::new(config, Arc::clone(&net)).unwrap();
+    let mut supp = Supplicant::with_eap_methods(config, Arc::clone(&net), Vec::new()).unwrap();
 
     supp.pae_set_authenticate(true);
     supp.tick().unwrap();

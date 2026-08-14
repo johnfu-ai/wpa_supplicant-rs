@@ -21,7 +21,7 @@ This file is a **living snapshot** of where the project stands across the 9-phas
 | 06 Integration | ✅ Approved 2026-06-06 | All 9 INT-NNN landed (#118, #119, #121, #122, #123, #124, #125, #126). 26 cross-crate integration tests. Gate report: `06-integration/phase-gate-report.md` | All 3 prerequisites (#128, #129, #130) now landed in Phase 07 |
 | 07 V&V | ✅ Approved 2026-06-07 | All 3 Phase-06 carry-forward prerequisites landed (#128 PR #132, #129 PR #136, #130 PR #134). FreeRADIUS interop harness P3.1 (PR #137). Clean-room verification record + 35/35 disclaimer coverage (P3.3). 6 TEST-VV-NNN gap issues filed (#139–#144). Gate report: `07-verification-validation/phase-gate-report.md`. **387 passing tests** (was 379 at Phase 06 close, +8). | Three conditional re-arms (#133 EAP method factory, #135 AES Key Wrap, #138 FreeRADIUS CI debug) carry forward to Phase 08 backlog |
 | 08 Transition | ✅ Approved 2026-06-13 | Release plan + operator runbook (PR #157), security review sweep (PR #156), supply-chain CI gate (PR #148 / #140), `--ignored` perf confirmation (PR #149), YANG deferral + Phase 08 gate report (this PR). Gate report: `08-transition/phase-gate-report.md`. **404 passing tests** (was 387 at Phase 07 close, +17). | 7 security-review trackers (#150–#155 + #133 carry-forward) + 5 TEST-VV gaps (#139, #141–#144) + #138 (FreeRADIUS CI) + #133 (EAP method factory) carried forward to Phase 09 backlog |
-| 09 Operation & Maintenance | 🟡 In progress | Security hardening batch complete: all 6 trackers #150–#155 landed 2026-06-21 (PRs #159, #160, #161, #162, #163, #164). TEST-VV hygiene gates landed: #144 (clippy unwrap/expect), #141 (unsafe discipline), #139 (llvm-cov ≥80%). FreeRADIUS CI boot fixed (#138). **418 passing tests** (+14 from Phase 08 close). | #133 (EAP method factory), TEST-VV gaps #142 (no_std CI) / #143 (fuzz), YANG/NETCONF management surface (deferred to v1.x) |
+| 09 Operation & Maintenance | 🟡 In progress | Security hardening batch complete: all 6 trackers #150–#155 landed 2026-06-21 (PRs #159, #160, #161, #162, #163, #164). TEST-VV hygiene gates landed: #144 (clippy unwrap/expect), #141 (unsafe discipline), #139 (llvm-cov ≥80%). FreeRADIUS CI boot fixed (#138). **#133 EAP method factory landed 2026-08-14** — `crates/wpa-supplicant/src/method_factory.rs` + `rustls_engine.rs` wired into `Supplicant::new`; PEM-loaded rustls engine drives a real TLS 1.2 handshake validated by a loopback test; F-08 `verify_server` escape-hatch honored. CI now runs the full `wpa-supplicant` suite under `eap-tls-rustls,eap-peap-rustls,eap-teap-rustls`. **418 passing tests** (default features) + 12 feature-gated factory/engine tests. | F-INT-1 (live FreeRADIUS handshake validation, `docs/IMPROVEMENTS.md`); TEST-VV gaps #142 (no_std CI) / #143 (fuzz); YANG/NETCONF management surface (deferred to v1.x) |
 
 ---
 
@@ -89,7 +89,7 @@ The five workspace crates map onto the IEEE 802.1X-2020 protocol entities as fol
 | REQ-NF coverage | 6 / 6 (DEPLOY + REL-003) | REQ-NF-DEPLOY-001..005, REQ-NF-REL-003 |
 | Closing commits | 8 Phase-06 PRs + 3 Phase-07 prerequisites: #118, #119, #121, #122, #123, #124, #125, #126, #132, #134, #136 | See `06-integration/phase-gate-report.md` Per-INT Disposition table + `07-verification-validation/phase-gate-report.md` Per-Task Disposition table |
 | Tests | 46 unit + **34 integration** = 80 total (0 `#[ignore]`) | `cargo test -p wpa-supplicant` |
-| Open gaps | None at Phase 07 close | `RawSocketNetworkIo` real socket implemented + feature-gated. `MkaParticipant` constructed end-to-end. AES Key Wrap (RFC 3394) for `unwrap_sak` landed in PR #146 (#135). EAP method factory from `EapMethodConfig` (PEM TLS engine construction) tracked as #133 — deferred to Phase 08 follow-up. |
+| Open gaps | None at Phase 07 close | `RawSocketNetworkIo` real socket implemented + feature-gated. `MkaParticipant` constructed end-to-end. AES Key Wrap (RFC 3394) for `unwrap_sak` landed in PR #146 (#135). **EAP method factory from `EapMethodConfig` (PEM rustls engine) landed #133 (2026-08-14)** — wired into `Supplicant::new`; remaining work is live-stack handshake validation (F-INT-1). |
 
 ---
 
@@ -157,7 +157,7 @@ The five workspace crates map onto the IEEE 802.1X-2020 protocol entities as fol
 
 | Gap | Severity | Reference |
 |---|---|---|
-| Real EAP method construction from `EapMethodConfig` (PEM TLS engine) | Info — defers full EAP-TLS / PEAP / TEAP handshake in interop harness | #133 |
+| Real EAP method construction from `EapMethodConfig` (PEM TLS engine) | **Landed 2026-08-14** — factory + rustls engine wired into `Supplicant::new`; live FreeRADIUS handshake validation is follow-up F-INT-1 | #133 ✅ |
 | FreeRADIUS CI auto-trigger | Closed — FreeRADIUS + hostapd boot cleanly in CI (#138 fixed); workflow stays `workflow_dispatch`-only until #133 enables full handshake | #138 |
 | `cargo llvm-cov` ≥ 80 % CI gate (REQ-NF-MNT-001) | Low | #139 (TEST-VV-001) |
 | `cargo geiger` + `// SAFETY:` adjacency CI gate (REQ-NF-SEC-001) | Low | #141 (TEST-VV-003) |

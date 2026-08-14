@@ -43,8 +43,11 @@ so its lines are not instrumented). All crates clear the 80% floor with
   coverage job (they are not run by `cargo test` either); coverage
   reflects the 418 non-ignored tests.
 - A temporary lower floor for a crate under active build-out (e.g. one
-  waiting on #133 / #137) is an explicit, reviewable entry in
-  `THRESHOLDS` — not a silent slackening.
+  waiting on a follow-up such as F-INT-1) is an explicit, reviewable
+  entry in `THRESHOLDS` — not a silent slackening. (The #133
+  `eap-tls-rustls` feature code is covered by dedicated feature-gated
+  tests and is exercised by the CI `Test (EAP method-factory
+  features)` step; it is out of scope for the default-feature gate.)
 
 ## Other CI gates
 

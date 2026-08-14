@@ -28,6 +28,15 @@ libc = { workspace = true, optional = true }
 # Used to construct `zeroize::Zeroizing<Vec<u8>>` for TLS private keys
 # in the empty-config builder per ADR-SEC-004 (#76) / security-review F-04 (#152).
 zeroize.workspace = true
+# EAP method factory (#133) — production TLS engine backed by rustls.
+# `ring` crypto backend (no OpenSSL), `std` for std::io::Read/Write,
+# `tls12` for minimum viable EAP-TLS per RFC 5216. The F-08
+# `verify_server = false` escape-hatch (lab/interop with un-pinnable
+# self-signed certs) uses rustls's `dangerous()` API, which is always
+# available without a feature flag in 0.23.x. The factory never sets
+# `verify_server = false` for production EAP-TLS.
+rustls = { version = "0.23", optional = true, default-features = false, features = ["ring", "std", "tls12"] }
+rustls-pemfile = { version = "2", optional = true }
 
 [features]
 default = []
@@ -37,6 +46,14 @@ systemd = []
 # the kernel I/O surface is not wanted (e.g. on macOS dev hosts or in
 # sandboxed CI without `CAP_NET_RAW`). Phase 07 prerequisite — see #128.
 raw-socket = ["dep:libc"]
+# EAP method factory with rustls TLS engine (#133).
+# Base feature: enables EAP-TLS method + PEM loading.
+# PEAP/TEAP build on this.
+eap-tls-rustls = ["dep:rustls", "dep:rustls-pemfile", "eap-peer/eap-tls"]
+eap-peap-rustls = ["eap-tls-rustls", "eap-peer/eap-peap"]
+eap-teap-rustls = ["eap-tls-rustls", "eap-peer/eap-teap"]
 
 [dev-dependencies]
 tempfile = "3"
+# Test certificate generation for EAP method factory tests (#133).
+rcgen = "0.13"

@@ -105,7 +105,7 @@ fn test_inbound_eapol_frame_reaches_supplicant_pae() {
     };
     net.enqueue(frame.encode().unwrap());
 
-    let mut supp = Supplicant::new(config, net).unwrap();
+    let mut supp = Supplicant::with_eap_methods(config, net, Vec::new()).unwrap();
 
     // Pre-condition: counter is zero before any tick.
     assert_eq!(supp.pae_counters().eapol_frames_rx, 0);
@@ -141,7 +141,7 @@ fn test_malformed_eapol_is_dropped_without_panic() {
     net.enqueue(vec![]);
     net.enqueue(vec![0x03, 0xEE, 0x00, 0x00]);
 
-    let mut supp = Supplicant::new(config, net).unwrap();
+    let mut supp = Supplicant::with_eap_methods(config, net, Vec::new()).unwrap();
 
     // Each tick drains one queued frame; run enough ticks to drain all.
     for _ in 0..4 {

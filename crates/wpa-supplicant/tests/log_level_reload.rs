@@ -82,7 +82,7 @@ fn test_set_log_level_invokes_logging_reload() {
     let config = make_config();
     let net = TestNet::new();
     let (logging, log) = make_recording_logging();
-    let mut supp = Supplicant::with_logging(config, net, logging).unwrap();
+    let mut supp = Supplicant::with_logging_and_methods(config, net, logging, Vec::new()).unwrap();
 
     supp.handle_command(ControlCommand::SetLogLevel {
         level: "debug".to_string(),
@@ -107,7 +107,7 @@ fn test_multiple_set_log_levels_routed() {
     let config = make_config();
     let net = TestNet::new();
     let (logging, log) = make_recording_logging();
-    let mut supp = Supplicant::with_logging(config, net, logging).unwrap();
+    let mut supp = Supplicant::with_logging_and_methods(config, net, logging, Vec::new()).unwrap();
 
     for level in &["trace", "wpa_supplicant=debug", "info", "warn"] {
         supp.handle_command(ControlCommand::SetLogLevel {
@@ -141,7 +141,7 @@ fn test_set_log_level_reload_error_does_not_crash_daemon() {
     let logging = Logging::from_test_handle(Arc::new(|_level: &str| {
         Err(anyhow::anyhow!("simulated reload failure"))
     }));
-    let mut supp = Supplicant::with_logging(config, net, logging).unwrap();
+    let mut supp = Supplicant::with_logging_and_methods(config, net, logging, Vec::new()).unwrap();
 
     let result = supp.handle_command(ControlCommand::SetLogLevel {
         level: "garbage===filter".to_string(),

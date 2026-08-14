@@ -85,9 +85,10 @@ echo "[run-supplicant] supplicant exited with rc=${rc:-0}"
 echo "[run-supplicant] log saved at /tmp/wpa-sup-interop.log"
 
 # Minimal acceptance: the binary started cleanly and ran the event loop.
-# Full handshake assertions (EAP success, SAK install, CP secured)
-# require #133 (EAP method factory). AES Key Wrap (#135) landed in
-# PR #146, so `unwrap_sak` is no longer stubbed.
+# Full handshake assertions (EAP success, SAK install, CP secured) are
+# follow-up F-INT-1 (the #133 method factory landed 2026-08-14 and is
+# wired into Supplicant::new). AES Key Wrap (#135) landed in PR #146,
+# so `unwrap_sak` is no longer stubbed.
 if grep -q "event loop started" /tmp/wpa-sup-interop.log; then
     echo "[run-supplicant] PASS: supplicant entered the event loop"
     exit 0

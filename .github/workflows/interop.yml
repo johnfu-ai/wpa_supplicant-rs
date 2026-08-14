@@ -10,8 +10,10 @@ name: Interop (FreeRADIUS)
 # fixes). Both `freeradius` (healthy) and `hostapd` (serving) come up.
 #
 # **Still `workflow_dispatch`-only** because the `--ignored` interop
-# test runs a full EAP handshake that needs the EAP method factory
-# (#133) — re-arming automatic runs on push/PR waits on #133 landing.
+# test runs a full live EAP handshake. The EAP method factory (#133)
+# landed 2026-08-14 and is wired in; re-arming automatic runs on push/PR
+# now waits on F-INT-1 (live-stack handshake validation,
+# `docs/IMPROVEMENTS.md`).
 
 on:
   workflow_dispatch: {}

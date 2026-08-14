@@ -130,7 +130,8 @@ fn drive_to_authenticating<N: NetworkIo>(supp: &mut Supplicant<N>, net: &TestNet
 fn test_eap_success_drives_pae_via_bridge() {
     let config = make_config();
     let net = std::sync::Arc::new(TestNet::new());
-    let mut supp = Supplicant::new(config, std::sync::Arc::clone(&net)).unwrap();
+    let mut supp =
+        Supplicant::with_eap_methods(config, std::sync::Arc::clone(&net), Vec::new()).unwrap();
 
     drive_to_authenticating(&mut supp, &net).unwrap();
 
@@ -159,7 +160,8 @@ fn test_eap_success_drives_pae_via_bridge() {
 fn test_eap_failure_drives_pae_via_bridge() {
     let config = make_config();
     let net = std::sync::Arc::new(TestNet::new());
-    let mut supp = Supplicant::new(config, std::sync::Arc::clone(&net)).unwrap();
+    let mut supp =
+        Supplicant::with_eap_methods(config, std::sync::Arc::clone(&net), Vec::new()).unwrap();
 
     drive_to_authenticating(&mut supp, &net).unwrap();
     let fails_before = supp.pae_counters().auth_fail_while_authenticating;
@@ -193,7 +195,8 @@ fn test_eap_failure_drives_pae_via_bridge() {
 fn test_eap_request_identity_emits_eap_response() {
     let config = make_config();
     let net = std::sync::Arc::new(TestNet::new());
-    let mut supp = Supplicant::new(config, std::sync::Arc::clone(&net)).unwrap();
+    let mut supp =
+        Supplicant::with_eap_methods(config, std::sync::Arc::clone(&net), Vec::new()).unwrap();
     supp.pae_set_authenticate(true);
     supp.tick().unwrap(); // -> Connecting + EAPOL-Start
 

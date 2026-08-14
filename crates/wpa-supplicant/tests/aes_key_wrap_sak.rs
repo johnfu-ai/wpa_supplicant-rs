@@ -122,7 +122,7 @@ fn test_unwrapped_sak_dispatches_to_cp_secured() {
     // Start with link down so CP is Disabled; then bring it up to
     // drive CP through EnableUnsecured per Cl.10.
     let net = Arc::new(TestNet::new(false));
-    let mut supp = Supplicant::new(config, Arc::clone(&net)).unwrap();
+    let mut supp = Supplicant::with_eap_methods(config, Arc::clone(&net), Vec::new()).unwrap();
     assert_eq!(supp.cp_state(), CpState::Disabled);
 
     // Drive CP Disabled -> Unsecured via link-up tick.
