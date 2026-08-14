@@ -546,6 +546,15 @@ impl<N: NetworkIo + 'static> Supplicant<N> {
         self.mka.is_some()
     }
 
+    /// The cipher suite of the constructed MKA participant, if any.
+    ///
+    /// Per #176 / REQ-F-CP-004 / REQ-F-MKA-005: reflects `config.macsec.cipher_suite`
+    /// (mapped onto `pae::CipherSuite` per Cl.9.7). Test bridge —
+    /// `state()` does not surface the cipher suite.
+    pub fn mka_cipher_suite(&self) -> Option<CipherSuite> {
+        self.mka.as_ref().map(pae::MkaParticipant::cipher_suite)
+    }
+
     /// Try to construct the MKA participant from a freshly-taken MSK.
     /// Internal — `tick()` is the only caller.
     fn try_construct_mka(&mut self, msk: Msk) -> Result<()> {
@@ -556,16 +565,17 @@ impl<N: NetworkIo + 'static> Supplicant<N> {
         let (cak, ckn) = derive_cak_from_msk(&kdf, &msk).map_err(anyhow::Error::from)?;
 
         // Build the adapter (`MkaContext` impl) and the participant.
-        // Cipher suite defaults to `GcmAes128`; full mapping from
-        // `config.macsec.cipher_suite` to `pae::CipherSuite` is a
-        // small follow-up.
+        // Cipher suite comes from `config.macsec.cipher_suite`, mapped
+        // onto `pae::CipherSuite` per Cl.9.7 (#176 / REQ-F-CP-004 / REQ-F-MKA-005);
+        // unknown values were already rejected at config load.
+        let cipher_suite = self.config.macsec.resolve_cipher_suite()?;
         let adapter = MkaParticipantAdapter::new(Arc::clone(&self.network));
         let sci = Sci::new(self.network.mac_address(), 1);
         let participant = MkaParticipant::new(
             adapter,
             cak,
             ckn,
-            CipherSuite::GcmAes128,
+            cipher_suite,
             sci,
             SUPPLICANT_KEY_SERVER_PRIORITY,
         )
