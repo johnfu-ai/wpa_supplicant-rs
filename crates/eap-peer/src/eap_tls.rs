@@ -64,6 +64,17 @@ pub trait TlsEngine: Send + Sync {
     /// Reset the TLS engine for reauthentication.
     fn reset(&mut self);
 
+    /// The TLS session ID negotiated during the handshake, if any.
+    ///
+    /// Per RFC 5216 §1.4, the EAP Session-Id is the EAP method type
+    /// byte concatenated with this value. TLS 1.2 exposes the session
+    /// ID directly; TLS 1.3 has no session ID and implementations
+    /// return `None` (callers then use a type-byte-only Session-Id
+    /// until the TLS 1.3 derivation lands).
+    fn session_id(&self) -> Option<Vec<u8>> {
+        None
+    }
+
     /// Decrypt data received through the established TLS tunnel.
     ///
     /// Used by tunnel methods (PEAP, TEAP) to process inner EAP data.
@@ -116,6 +127,19 @@ impl EapTls {
     /// Current EAP-TLS state.
     pub fn state(&self) -> EapTlsState {
         self.state
+    }
+
+    /// Build the EAP Session-Id per RFC 5216 §1.4.
+    ///
+    /// The Session-Id is the EAP method-type byte (0x0D for EAP-TLS)
+    /// concatenated with the TLS Session-ID negotiated in the
+    /// handshake. When the engine reports no TLS session ID (TLS 1.3
+    /// has none; see [`TlsEngine::session_id`]) the Session-Id is the
+    /// type byte alone.
+    fn eap_session_id(engine: &dyn TlsEngine) -> Vec<u8> {
+        let mut session_id = vec![EapType::Tls.value()];
+        session_id.extend(engine.session_id().unwrap_or_default());
+        session_id
     }
 
     /// Parse EAP-TLS flags and data from the request payload.
@@ -212,7 +236,7 @@ impl EapMethod for EapTls {
                                 .msk
                                 .take()
                                 .ok_or_else(|| EapError::TlsError("MSK not available".into()))?,
-                            session_id: vec![EapType::Tls.value()],
+                            session_id: Self::eap_session_id(&*engine),
                         })
                     }
                 }
@@ -241,7 +265,7 @@ impl EapMethod for EapTls {
                                 .msk
                                 .take()
                                 .ok_or_else(|| EapError::TlsError("MSK not available".into()))?,
-                            session_id: vec![EapType::Tls.value()],
+                            session_id: Self::eap_session_id(&*engine),
                         })
                     }
                 }
@@ -331,6 +355,11 @@ mod tests {
             self.initialized = false;
             self.handshake_step = 0;
             self.complete = false;
+        }
+
+        /// Simulated TLS 1.2 session ID (RFC 5216 §1.4 F-EAP-1 test).
+        fn session_id(&self) -> Option<Vec<u8>> {
+            Some(vec![0x5E, 0x55, 0x1D, 0xC0, 0xDE])
         }
     }
 
@@ -456,6 +485,37 @@ mod tests {
         }
         assert_eq!(method.state(), EapTlsState::Complete);
         assert!(method.is_complete());
+    }
+
+    /// Verifies: #174 (REQ-F-EAP-002) — F-EAP-1
+    /// Per RFC 5216 §1.4: Session-Id = 0x0D || TLS-Session-ID. The
+    /// exported Session-Id must be the EAP method-type byte followed by
+    /// the TLS session ID negotiated in the handshake, not the type
+    /// byte alone.
+    #[test]
+    fn test_eap_tls_session_id_format() {
+        let engine = Arc::new(std::sync::Mutex::new(MockSuccessTlsEngine::new()));
+        let mut method = EapTls::new(engine);
+        let ctx = MockContext::new();
+
+        // Step 1: TLS-Start
+        let start_data = vec![TLS_FLAGS_START];
+        let result = method.handle_request(1, &start_data, &ctx).unwrap();
+        assert!(matches!(result, EapMethodOutput::Respond { .. }));
+
+        // Step 2: Server response — handshake completes
+        let server_data = vec![0x00];
+        let result = method.handle_request(2, &server_data, &ctx).unwrap();
+
+        match result {
+            EapMethodOutput::Success { msk: _, session_id } => {
+                // First byte: EAP Type code for EAP-TLS.
+                assert_eq!(session_id[0], EapType::Tls.value());
+                // Remainder: the TLS session ID from the engine.
+                assert_eq!(session_id[1..], [0x5E, 0x55, 0x1D, 0xC0, 0xDE][..]);
+            }
+            _ => panic!("expected Success, got {:?}", result),
+        }
     }
 
     /// Verifies: #39 (REQ-F-EAP-002)
