@@ -18,7 +18,7 @@ CI runs a `Coverage (llvm-cov >= 80% per crate)` job on every push to
 Per-crate line-coverage floors (default 80% per REQ-NF-MNT-001) are
 configured in `scripts/check_coverage.py:THRESHOLDS`.
 
-### Baseline (2026-06-21, default features, 418 tests)
+### Baseline (refreshed 2026-08-14, default features, 428 tests)
 
 | Crate | Lines | Covered | % | Floor |
 |---|---|---|---|---|
@@ -41,7 +41,7 @@ so its lines are not instrumented). All crates clear the 80% floor with
   feature-specific tests and is out of scope for this gate.
 - The 12 `#[ignore]`-gated wall-clock perf tests are not run by the
   coverage job (they are not run by `cargo test` either); coverage
-  reflects the 418 non-ignored tests.
+  reflects the 428 non-ignored tests.
 - A temporary lower floor for a crate under active build-out (e.g. one
   waiting on a follow-up such as F-INT-1) is an explicit, reviewable
   entry in `THRESHOLDS` — not a silent slackening. (The #133
