@@ -36,7 +36,10 @@ zeroize.workspace = true
 # available without a feature flag in 0.23.x. The factory never sets
 # `verify_server = false` for production EAP-TLS.
 rustls = { version = "0.23", optional = true, default-features = false, features = ["ring", "std", "tls12"] }
-rustls-pemfile = { version = "2", optional = true }
+# PEM parsing for the method factory (#133) via the maintained
+# `PemObject` API per RUSTSEC-2025-0134 (rustls-pemfile is unmaintained).
+# The `alloc` feature gates the PEM decoding APIs.
+rustls-pki-types = { version = "1.10", optional = true, features = ["alloc"] }
 
 [features]
 default = []
@@ -49,7 +52,7 @@ raw-socket = ["dep:libc"]
 # EAP method factory with rustls TLS engine (#133).
 # Base feature: enables EAP-TLS method + PEM loading.
 # PEAP/TEAP build on this.
-eap-tls-rustls = ["dep:rustls", "dep:rustls-pemfile", "eap-peer/eap-tls"]
+eap-tls-rustls = ["dep:rustls", "dep:rustls-pki-types", "eap-peer/eap-tls"]
 eap-peap-rustls = ["eap-tls-rustls", "eap-peer/eap-peap"]
 eap-teap-rustls = ["eap-tls-rustls", "eap-peer/eap-teap"]
 

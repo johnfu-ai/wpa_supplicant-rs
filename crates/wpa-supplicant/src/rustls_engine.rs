@@ -15,6 +15,9 @@ use std::sync::Arc;
 
 use eap_peer::peer::TlsClientConfig;
 use eap_peer::{EapError, TlsEngine};
+// PEM decoding per RUSTSEC-2025-0134: rustls-pemfile is unmaintained;
+// the maintained `PemObject` API lives in rustls-pki-types.
+use rustls::pki_types::pem::PemObject;
 
 /// Rustls-backed TLS engine for EAP-TLS.
 ///
@@ -79,9 +82,8 @@ impl RustlsTlsEngine {
         let client_config = if certs.is_empty() {
             builder.with_no_client_auth()
         } else {
-            let key = rustls_pemfile::private_key(&mut &config.private_key[..])
-                .map_err(|e| EapError::TlsError(format!("key parse: {e}")))?
-                .ok_or_else(|| EapError::TlsError("no private key found".into()))?;
+            let key = rustls::pki_types::PrivateKeyDer::from_pem_slice(&config.private_key)
+                .map_err(|e| EapError::TlsError(format!("key parse: {e}")))?;
             builder
                 .with_client_auth_cert(certs, key)
                 .map_err(|e| EapError::TlsError(format!("client config: {e}")))?
@@ -187,7 +189,7 @@ fn parse_certs(
 ) -> Result<Vec<rustls::pki_types::CertificateDer<'static>>, EapError> {
     let mut certs: Vec<rustls::pki_types::CertificateDer> = Vec::new();
     for pem in pems {
-        let parsed = rustls_pemfile::certs(&mut &pem[..])
+        let parsed = rustls::pki_types::CertificateDer::pem_slice_iter(pem)
             .collect::<Result<Vec<_>, _>>()
             .map_err(|e| EapError::TlsError(format!("{label} parse: {e}")))?;
         certs.extend(parsed);
