@@ -151,6 +151,37 @@ impl TlsEngine for RustlsTlsEngine {
         self.conn.as_ref().is_some_and(|c| !c.is_handshaking())
     }
 
+    /// The TLS session identifier for the EAP Session-Id per RFC 5216
+    /// §1.4 / RFC 9190 §2.3 (#174 / F-EAP-1).
+    ///
+    /// * TLS 1.3 — `Method-Id = TLS-Exporter("EXPORTER_EAP_TLS_Method-Id",
+    ///   Type, 64)`; the EAP Session-Id is `0x0D || Method-Id`.
+    /// * TLS 1.2 — RFC 5216 §1.4 wants the negotiated TLS session ID,
+    ///   which rustls 0.23 does not expose publicly; this returns `None`
+    ///   and the EAP Session-Id degrades to the type byte alone
+    ///   (documented limitation in `docs/IMPROVEMENTS.md` F-EAP-1).
+    fn session_id(&self) -> Option<Vec<u8>> {
+        let conn = self.conn.as_ref()?;
+        if conn.is_handshaking() {
+            return None;
+        }
+        match conn.protocol_version() {
+            Some(rustls::ProtocolVersion::TLSv1_3) => {
+                // Per RFC 9190 §2.3: 64-octet exporter-derived Method-Id.
+                // The EAP Type code (0x0D) is the exporter *context*.
+                let mut method_id = vec![0u8; 64];
+                conn.export_keying_material(
+                    &mut method_id,
+                    b"EXPORTER_EAP_TLS_Method-Id",
+                    Some(&[eap_peer::peer::EapType::Tls.value()]),
+                )
+                .ok()?;
+                Some(method_id)
+            }
+            _ => None,
+        }
+    }
+
     fn derive_msk(&mut self) -> Result<pae::Msk, EapError> {
         let conn = self
             .conn
@@ -161,12 +192,25 @@ impl TlsEngine for RustlsTlsEngine {
             return Err(EapError::TlsError("handshake not complete".into()));
         }
 
-        // Per RFC 5216 §2.3: MSK = TLS-Exporter("EXPORTER_EAP_TLS_Key_Material", ...)
-        // Export 128 bytes: first 64 = MSK, next 64 = EMSK.
-        // The Msk type enforces >= 64 bytes at construction.
+        // Per RFC 9190 §2.3 (TLS 1.3): Key_Material =
+        // TLS-Exporter("EXPORTER_EAP_TLS_Key_Material", Type, 128) —
+        // the EAP Type code (0x0D) is the exporter *context*. First
+        // 64 bytes = MSK, next 64 = EMSK. The `Msk` type enforces
+        // >= 64 bytes at construction.
+        //
+        // Scope note: RFC 9190 scopes this exporter derivation to
+        // TLS 1.3. Under TLS 1.2, RFC 5216 §2.3 prescribes a PRF
+        // derivation over the handshake randoms instead — this engine
+        // reuses the exporter for both versions, so a TLS 1.2 MSK will
+        // not match an RFC 5216-conformant peer (tracked as #179,
+        // surfaced for F-INT-1). rustls negotiates TLS 1.3 by default.
         let mut key_material = vec![0u8; 128];
-        conn.export_keying_material(&mut key_material, b"EXPORTER_EAP_TLS_Key_Material", None)
-            .map_err(|e| EapError::TlsError(format!("export_keying_material: {e}")))?;
+        conn.export_keying_material(
+            &mut key_material,
+            b"EXPORTER_EAP_TLS_Key_Material",
+            Some(&[eap_peer::peer::EapType::Tls.value()]),
+        )
+        .map_err(|e| EapError::TlsError(format!("export_keying_material: {e}")))?;
 
         // Take first 64 bytes as MSK.
         pae::Msk::from_bytes(key_material[..64].to_vec())
@@ -459,6 +503,56 @@ mod tests {
 
         let msk = engine.derive_msk().expect("MSK export must succeed");
         assert!(msk.len() >= 64, "MSK must be >=64 bytes per RFC 3748");
+    }
+
+    /// Verifies: #174 (REQ-F-EAP-002) — F-EAP-1
+    /// Per RFC 9190 §2.3 (TLS 1.3): Session-Id = 0x0D || Method-Id where
+    /// Method-Id = TLS-Exporter("EXPORTER_EAP_TLS_Method-Id", Type, 64).
+    /// Under TLS 1.2 (RFC 5216 §1.4) the TLS session ID is needed but is
+    /// not exposed by rustls 0.23 — the engine then reports `None` and
+    /// the EAP Session-Id degrades to the type byte alone (documented
+    /// limitation, docs/IMPROVEMENTS.md F-EAP-1).
+    #[test]
+    fn test_rustls_engine_session_id_after_handshake() {
+        let (server_der, server_key_pkcs8, ca_pem) = loopback_cert();
+
+        let server_cfg = rustls::ServerConfig::builder()
+            .with_no_client_auth()
+            .with_single_cert(
+                vec![rustls::pki_types::CertificateDer::from(server_der)],
+                rustls::pki_types::PrivateKeyDer::Pkcs8(
+                    rustls::pki_types::PrivatePkcs8KeyDer::from(server_key_pkcs8),
+                ),
+            )
+            .unwrap();
+        let mut server = rustls::ServerConnection::new(Arc::new(server_cfg)).unwrap();
+
+        let client_cfg = TlsClientConfig {
+            cert_chain: Vec::new(),
+            private_key: zeroize::Zeroizing::new(Vec::new()),
+            ca_certs: vec![ca_pem],
+            verify_server: true,
+        };
+        let mut engine = RustlsTlsEngine::new();
+        engine.init_session(&client_cfg).unwrap();
+        drive_handshake(&mut engine, &mut server).unwrap();
+        assert!(engine.is_handshake_complete());
+
+        let negotiated = engine
+            .conn
+            .as_ref()
+            .and_then(|c| c.protocol_version())
+            .expect("negotiated version after handshake");
+        if negotiated == rustls::ProtocolVersion::TLSv1_3 {
+            let sid = engine
+                .session_id()
+                .expect("TLS 1.3 session id via exporter per RFC 9190 2.3");
+            assert_eq!(sid.len(), 64, "Method-Id is 64 octets per RFC 9190 2.3");
+        } else {
+            // TLS 1.2: rustls 0.23 does not expose the negotiated
+            // session ID; the documented fallback is `None`.
+            assert_eq!(engine.session_id(), None);
+        }
     }
 
     /// Verifies: #133 (REQ-F-EAP-003/004)
