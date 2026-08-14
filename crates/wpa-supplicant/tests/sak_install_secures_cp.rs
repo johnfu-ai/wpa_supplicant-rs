@@ -81,7 +81,7 @@ fn test_mka_sak_installed_drives_cp_to_secured() {
     // Disabled / LinkDown; then bring the link up via tick() to
     // drive CP through EnableUnsecured.
     let net = Arc::new(TestNet::new(false));
-    let mut supp = Supplicant::new(config, Arc::clone(&net)).unwrap();
+    let mut supp = Supplicant::with_eap_methods(config, Arc::clone(&net), Vec::new()).unwrap();
     assert_eq!(supp.cp_state(), CpState::Disabled);
 
     net.set_link(true);
@@ -120,7 +120,7 @@ fn test_mka_sak_installed_drives_cp_to_secured() {
 fn test_mka_sak_installed_from_disabled_is_warn_not_crash() {
     let config = make_config();
     let net = TestNet::new(true);
-    let mut supp = Supplicant::new(config, net).unwrap();
+    let mut supp = Supplicant::with_eap_methods(config, net, Vec::new()).unwrap();
 
     assert_eq!(
         supp.cp_state(),
@@ -155,7 +155,7 @@ fn test_mka_sak_installed_from_disabled_is_warn_not_crash() {
 fn test_mka_sak_installed_with_invalid_key_does_not_crash() {
     let config = make_config();
     let net = TestNet::new(true);
-    let mut supp = Supplicant::new(config, net).unwrap();
+    let mut supp = Supplicant::with_eap_methods(config, net, Vec::new()).unwrap();
 
     let sci = Sci::new([0x02, 0x00, 0x00, 0x00, 0x00, 0x04], 1);
     // 7-byte key — Sak::from_bytes will reject; INT-005 dispatch must
@@ -184,7 +184,7 @@ fn test_mka_sak_installed_with_invalid_key_does_not_crash() {
 fn test_other_pae_events_dispatch_cleanly() {
     let config = make_config();
     let net = TestNet::new(true);
-    let mut supp = Supplicant::new(config, net).unwrap();
+    let mut supp = Supplicant::with_eap_methods(config, net, Vec::new()).unwrap();
 
     assert!(supp
         .dispatch_pae_event(PaeEvent::MkaSessionEstablished)

@@ -35,6 +35,15 @@ jobs:
         run: cargo build --workspace
       - name: Test
         run: cargo test --workspace
+      - name: Test (EAP method-factory features, #133)
+        # Feature-gated EAP-TLS/PEAP/TEAP method factory (#133). Runs the
+        # full wpa-supplicant suite under all three EAP features so the
+        # rustls TLS engine + PEM factory are exercised in CI, not just
+        # compiled by the `--all-features` clippy pass above. The
+        # non-EAP integration tests use the explicit-injection
+        # constructor (`with_eap_methods`) so they stay green under the
+        # feature without depending on PEM files.
+        run: cargo test -p wpa-supplicant --features eap-tls-rustls,eap-peap-rustls,eap-teap-rustls
 
   build-aarch64:
     name: Cross-build (aarch64)

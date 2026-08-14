@@ -42,6 +42,9 @@ allow = [
     "Apache-2.0",
     "Apache-2.0 WITH LLVM-exception",
     "BSD-3-Clause",
+    # ring + rustls-webpki (rustls crypto backend, #133 EAP method
+    # factory) are ISC-licensed — permissive, OSI-approved.
+    "ISC",
     "MIT",
     "Unicode-3.0",
     "Unlicense",

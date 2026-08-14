@@ -11,7 +11,7 @@
 
 This document is the **release plan for the first cut of `wpa_supplicant-rs`** as a deployable IEEE 802.1X-2020 supplicant on Linux. It is the artifact required by Phase 08 / `docs/TODO.md` P4.1 ("cargo publish strategy, version pinning policy, `cargo-deny` baseline, deb/rpm scope").
 
-**Out of scope** for this release: Authenticator role (the project is supplicant-only per StR-001), full EAP-TLS / PEAP / TEAP handshake against a real RADIUS server (deferred to #133), and the security-review medium findings #150–#155 (mitigations land issue-by-issue against Phase 09 maintenance).
+**Out of scope** for this release: Authenticator role (the project is supplicant-only per StR-001), and a full *live* EAP-TLS / PEAP / TEAP handshake against a real RADIUS server (the #133 method factory + rustls engine landed 2026-08-14 and are wired into `Supplicant::new`; the live-stack handshake validation is follow-up **F-INT-1**, `docs/IMPROVEMENTS.md`). The security-review findings #150–#155 are all closed (2026-06-21).
 
 ## 2. Versioning policy
 
@@ -19,7 +19,7 @@ This document is the **release plan for the first cut of `wpa_supplicant-rs`** a
 |---|---|
 | Workspace root version | Single `version` in `[workspace.package]` of the top-level `Cargo.toml`. Every member crate sets `version.workspace = true`. |
 | First public release | **`0.1.0`** — current workspace version. The `0.x.y` line signals "pre-stable API"; minor bumps (`0.x` → `0.y`) MAY break the public API; patch bumps (`0.0.y` → `0.0.z`) MUST NOT. |
-| Stable line target | `1.0.0` will gate on (a) #133 EAP method factory landing with a real `RustlsEngine`, (b) all four security-review Medium findings (#150–#152) closed, and (c) one external interop run reaching CP→Secured against an unmodified hostapd Authenticator. |
+| Stable line target | `1.0.0` will gate on (a) ~~#133 EAP method factory landing with a real `RustlsEngine`~~ ✅ landed 2026-08-14 (real rustls engine wired into `Supplicant::new`), (b) ~~all security-review Medium findings (#150–#155)~~ ✅ closed 2026-06-21, and (c) one external interop run reaching CP→Secured against an unmodified hostapd Authenticator (follow-up **F-INT-1**). |
 | Compatibility | The four library crates (`pae`, `eapol-supp`, `eap-peer`, `logon`) follow [semver](https://semver.org/) once they are first published to crates.io. The binary crate (`wpa-supplicant`) follows the workspace version line; its CLI / config / control-socket protocol carry separate stability guarantees described in §6. |
 | Rust toolchain | MSRV pinned at the workspace level: `rust-version = "1.75"` (already set in `Cargo.toml`). Bumps are a minor-version event (`0.x.y` → `0.(x+1).0`) and CHANGELOG-noted. |
 

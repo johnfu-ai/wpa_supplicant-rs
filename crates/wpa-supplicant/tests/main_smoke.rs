@@ -76,7 +76,8 @@ ca = "/etc/certs/ca.pem"
     assert_eq!(config.eap.identity, "smoke@example.com");
 
     let net = StubNet::new();
-    let mut supp = Supplicant::new(config, net).expect("Supplicant must construct");
+    let mut supp =
+        Supplicant::with_eap_methods(config, net, Vec::new()).expect("Supplicant must construct");
 
     // tick() must return Ok on a freshly-constructed supplicant with
     // nothing on the wire — the binary entry point invokes tick in

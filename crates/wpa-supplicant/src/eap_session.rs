@@ -33,19 +33,19 @@
 //!
 //! ## Method construction
 //!
-//! Building real EAP methods from [`crate::config::EapMethodConfig`]
-//! (loading PEM certificates, instantiating a `TlsEngine`, wiring
-//! EAP-PEAP / EAP-TEAP inner-method chains) is intentionally out of
-//! scope for #130 — the focus here is the bridge wiring. The default
-//! production constructor builds an `EapSession` with **no methods**;
-//! the peer can still handle EAP-Identity / EAP-Notification natively
-//! and route EAP-Success / EAP-Failure into the PAE, which is the
-//! minimum end-to-end shape for the Phase 07 V&V FreeRADIUS interop
-//! harness once a method factory is wired. Tracked as **#133**
-//! ("load EAP methods from EapMethodConfig").
+//! Real EAP methods are built from [`crate::config::EapMethodConfig`]
+//! by the EAP method factory (`crate::method_factory`, #133): it loads
+//! PEM certificates, instantiates a `rustls`-backed `TlsEngine`, wires
+//! EAP-TLS / EAP-PEAP / EAP-TEAP (with PEAP inner-method chains), and
+//! returns the method list plus the [`TlsClientConfig`] the methods
+//! read through [`EapContext::tls_config`]. [`crate::Supplicant::new`]
+//! / [`crate::Supplicant::with_logging`] invoke the factory when the
+//! `eap-tls-rustls` feature is enabled; otherwise the session is built
+//! with no methods (the peer still handles EAP-Identity /
+//! EAP-Notification natively and routes EAP-Success / EAP-Failure).
 //!
 //! Integration tests inject mock methods via
-//! [`crate::Supplicant::with_eap_methods`].
+//! [`crate::Supplicant::with_eap_methods`], bypassing the factory.
 //!
 //! IMPORTANT: This implementation is based on understanding of IEEE
 //! 802.1X-2020 and RFC 3748. No copyrighted content from those
@@ -85,8 +85,9 @@ pub(crate) struct EapSession<N: NetworkIo> {
     peer: EapPeer,
     methods: Vec<Box<dyn EapMethod>>,
     ctx: EapContextImpl<N>,
-    /// Wall-clock anchor for per-method retransmit deadlines wired by
-    /// the future EAP-method factory (#133). Read by `elapsed()`.
+    /// Wall-clock anchor for per-method retransmit deadlines. Read by
+    /// `elapsed()`; wired for the EAP-method factory (#133) retransmit
+    /// deadlines.
     #[allow(dead_code)]
     started_at: Instant,
     /// MSK taken from the EAP peer on success. Held until the MKA
@@ -96,12 +97,18 @@ pub(crate) struct EapSession<N: NetworkIo> {
 }
 
 impl<N: NetworkIo> EapSession<N> {
-    /// Construct an EAP session with the given methods, identity, and
-    /// network handle.
+    /// Construct an EAP session with the given methods, identity,
+    /// network handle, and TLS client configuration.
+    ///
+    /// The `tls_config` flows into the [`EapContext`] the methods read
+    /// via `ctx.tls_config()`. The EAP method factory (#133) builds it
+    /// from PEM material in `EapMethodConfig`; callers that inject
+    /// their own methods (tests) pass [`empty_tls_config`].
     pub(crate) fn new(
         network: Arc<N>,
         identity: Vec<u8>,
         methods: Vec<Box<dyn EapMethod>>,
+        tls_config: TlsClientConfig,
     ) -> Self {
         Self {
             peer: EapPeer::new(),
@@ -109,7 +116,7 @@ impl<N: NetworkIo> EapSession<N> {
             ctx: EapContextImpl {
                 network,
                 identity,
-                tls_config: empty_tls_config(),
+                tls_config,
             },
             started_at: Instant::now(),
             pending_msk: None,
@@ -243,11 +250,12 @@ impl<N: NetworkIo + Send + Sync> EapContext for EapContextImpl<N> {
     }
 }
 
-/// Placeholder TLS config — populated by the method-factory follow-up
-/// (#133). Loading PEM from `EapMethodConfig` is out of scope for
-/// #130. Real methods that need TLS will be constructed with their
-/// own engines via the inject-from-test path in the meantime.
-fn empty_tls_config() -> TlsClientConfig {
+/// Placeholder TLS config for callers that do not load PEM material —
+/// e.g. the test-injection path ([`crate::Supplicant::with_eap_methods`])
+/// and the no-factory build (when the `eap-tls-rustls` feature is off).
+/// Real EAP-TLS / PEAP / TEAP methods built by the method factory (#133)
+/// carry their own [`TlsClientConfig`] loaded from `EapMethodConfig`.
+pub(crate) fn empty_tls_config() -> TlsClientConfig {
     TlsClientConfig {
         cert_chain: Vec::new(),
         private_key: zeroize::Zeroizing::new(Vec::new()),

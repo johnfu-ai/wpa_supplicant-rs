@@ -82,7 +82,8 @@ ca = "/etc/certs/ca.pem"
 fn test_tick_advances_pae_to_connecting_and_emits_eapol_start() {
     let config = make_config();
     let net = std::sync::Arc::new(TestNet::new());
-    let mut supp = Supplicant::new(config, std::sync::Arc::clone(&net)).unwrap();
+    let mut supp =
+        Supplicant::with_eap_methods(config, std::sync::Arc::clone(&net), Vec::new()).unwrap();
 
     assert_eq!(supp.pae_state(), PaeState::Disconnected);
 
@@ -117,7 +118,8 @@ fn test_tick_advances_pae_to_connecting_and_emits_eapol_start() {
 fn test_tick_does_not_double_emit_eapol_start() {
     let config = make_config();
     let net = std::sync::Arc::new(TestNet::new());
-    let mut supp = Supplicant::new(config, std::sync::Arc::clone(&net)).unwrap();
+    let mut supp =
+        Supplicant::with_eap_methods(config, std::sync::Arc::clone(&net), Vec::new()).unwrap();
 
     supp.pae_set_authenticate(true);
     for _ in 0..5 {
@@ -145,7 +147,7 @@ fn test_tick_does_not_double_emit_eapol_start() {
 fn test_tick_returns_ok_on_quiet_supplicant() {
     let config = make_config();
     let net = TestNet::new();
-    let mut supp = Supplicant::new(config, net).unwrap();
+    let mut supp = Supplicant::with_eap_methods(config, net, Vec::new()).unwrap();
 
     // No authenticate flag, no inbound frames, no link change.
     let events = supp.tick().unwrap();

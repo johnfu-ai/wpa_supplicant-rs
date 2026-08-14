@@ -134,7 +134,8 @@ fn drive_to_authenticated<N: NetworkIo>(supp: &mut Supplicant<N>, net: &TestNet)
 fn test_reauthenticate_from_authenticated() {
     let config = make_config();
     let net = std::sync::Arc::new(TestNet::new());
-    let mut supp = Supplicant::new(config, std::sync::Arc::clone(&net)).unwrap();
+    let mut supp =
+        Supplicant::with_eap_methods(config, std::sync::Arc::clone(&net), Vec::new()).unwrap();
 
     drive_to_authenticated(&mut supp, &net).unwrap();
 
@@ -177,7 +178,7 @@ fn test_reauthenticate_from_authenticated() {
 fn test_reauthenticate_from_invalid_state_is_noop() {
     let config = make_config();
     let net = TestNet::new();
-    let mut supp = Supplicant::new(config, net).unwrap();
+    let mut supp = Supplicant::with_eap_methods(config, net, Vec::new()).unwrap();
 
     // PAE starts in Disconnected; reauth is not valid here.
     assert_eq!(supp.pae_state(), PaeState::Disconnected);
@@ -207,7 +208,8 @@ fn test_reauthenticate_from_invalid_state_is_noop() {
 fn test_logoff_from_authenticated_sends_eapol_logoff() {
     let config = make_config();
     let net = std::sync::Arc::new(TestNet::new());
-    let mut supp = Supplicant::new(config, std::sync::Arc::clone(&net)).unwrap();
+    let mut supp =
+        Supplicant::with_eap_methods(config, std::sync::Arc::clone(&net), Vec::new()).unwrap();
 
     drive_to_authenticated(&mut supp, &net).unwrap();
 
@@ -250,7 +252,7 @@ fn test_logoff_from_authenticated_sends_eapol_logoff() {
 fn test_logoff_from_invalid_state_is_noop() {
     let config = make_config();
     let net = TestNet::new();
-    let mut supp = Supplicant::new(config, net).unwrap();
+    let mut supp = Supplicant::with_eap_methods(config, net, Vec::new()).unwrap();
 
     assert_eq!(supp.pae_state(), PaeState::Disconnected);
 

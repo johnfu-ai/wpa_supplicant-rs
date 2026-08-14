@@ -10,7 +10,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 1. What this repo is
 
-`wpa_supplicant-rs` is a clean-room **IEEE 802.1X-2020 supplicant** in Rust — supplicant role only, no Authenticator PAE, no AP-side logic. It is a Cargo workspace of five crates plus nine lifecycle-phase directories that hold the ISO/IEC/IEEE 12207 / 29148 / 1016 / 42010 / 1012 evidence. Phases 01–08 are gate-approved (Phase 08 Transition closed 2026-06-13 with `08-transition/phase-gate-report.md`; 418 passing unit/integration tests + 12 `#[ignore]` wall-clock perf tests across 5 crates). **Phase 09 (Operation & Maintenance) is the active frontier** — the security-review hardening batch (#150–#155) landed 2026-06-21; the open backlog is the TEST-VV coverage gaps #139 / #141–#144, carry-forwards #133 (EAP method factory) and #138 (FreeRADIUS CI debug), plus the deferred YANG/NETCONF management-surface ADR. The Phase 06 INT-NNN integration TODOs all landed (#118–#126); the operator-facing entry point for Phase 09 work is `09-operation-maintenance/runbook.md`.
+`wpa_supplicant-rs` is a clean-room **IEEE 802.1X-2020 supplicant** in Rust — supplicant role only, no Authenticator PAE, no AP-side logic. It is a Cargo workspace of five crates plus nine lifecycle-phase directories that hold the ISO/IEC/IEEE 12207 / 29148 / 1016 / 42010 / 1012 evidence. Phases 01–08 are gate-approved (Phase 08 Transition closed 2026-06-13 with `08-transition/phase-gate-report.md`; 418 passing unit/integration tests + 12 `#[ignore]` wall-clock perf tests across 5 crates). **Phase 09 (Operation & Maintenance) is the active frontier** — the security-review hardening batch (#150–#155) landed 2026-06-21; the **#133 EAP method factory (PEM-loaded rustls engine, wired into `Supplicant::new`) landed 2026-08-14**; #138 (FreeRADIUS CI) is fixed. The open backlog is the live FreeRADIUS handshake validation (F-INT-1, `docs/IMPROVEMENTS.md`), the TEST-VV coverage gaps #139 / #141–#144, and the deferred YANG/NETCONF management-surface ADR. The Phase 06 INT-NNN integration TODOs all landed (#118–#126); the operator-facing entry point for Phase 09 work is `09-operation-maintenance/runbook.md`. The full improvements catalog lives in `docs/IMPROVEMENTS.md`.
 
 ## 2. Build, test, lint
 
@@ -19,6 +19,7 @@ cargo build --workspace                          # Build all crates
 cargo build -p <crate>                           # Build a single crate
 cargo test  --workspace                          # Run all tests (418 unit/integration + 12 #[ignore] perf)
 cargo test  -p <crate>                           # Run tests for a single crate
+cargo test  -p wpa-supplicant --features eap-tls-rustls,eap-peap-rustls,eap-teap-rustls  # Feature-gated EAP method factory (#133): factory + rustls engine tests
 cargo test  <test_name>                          # Run a single test by name (substring match)
 cargo test  --workspace -- --ignored             # Include wall-clock perf tests (a90c033)
 cargo clippy --workspace --all-targets -- -D warnings

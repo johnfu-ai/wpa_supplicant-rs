@@ -1,15 +1,16 @@
 //! FreeRADIUS-in-Docker interop harness driver, callable from `cargo test`.
 //!
-//! Implements: `docs/TODO.md` P3.1. Covers REQ-F-EAP-002 / REQ-F-EAP-003 /
-//! REQ-F-EAP-004 once the EAP method factory (#133) follow-up lands.
-//! AES Key Wrap (RFC 3394) for MKA SAK unwrap landed in PR #146 (#135).
-//! Today this test asserts the harness infrastructure (docker-compose,
-//! certs, veth setup, binary boot) works end-to-end; the *full* EAP-TLS /
-//! PEAP / TEAP handshake assertion is deferred behind a `// TODO(#133)`
-//! marker.
+//! Implements: `docs/TODO.md` P3.1. The EAP method factory (#133) landed
+//! 2026-08-14 and is wired into `Supplicant::new`; what remains for full
+//! REQ-F-EAP-002 / REQ-F-EAP-003 / REQ-F-EAP-004 *live-stack* coverage is
+//! follow-up F-INT-1 (`docs/IMPROVEMENTS.md`). AES Key Wrap (RFC 3394)
+//! for MKA SAK unwrap landed in PR #146 (#135). Today this test asserts
+//! the harness infrastructure (docker-compose, certs, veth setup, binary
+//! boot) works end-to-end; the full live EAP-TLS / PEAP / TEAP handshake
+//! assertion is deferred behind a `// TODO(F-INT-1)` marker.
 //!
 //! Verifies: `docs/TODO.md` P3.1 (harness today); REQ-F-EAP-002 /
-//! REQ-F-EAP-003 / REQ-F-EAP-004 once #133 lands.
+//! REQ-F-EAP-003 / REQ-F-EAP-004 once F-INT-1 lands.
 //!
 //! ## Why `#[ignore]`
 //!
@@ -90,10 +91,11 @@ fn docker_compose(args: &[&str]) -> std::process::ExitStatus {
 ///    initial EAP-Request/Identity exchange.
 /// 5. Tear down.
 ///
-/// Once #133 lands (real EAP method factory from `EapMethodConfig`),
-/// this test grows assertions on the full EAP-TLS handshake and SAK
-/// install path (AES Key Wrap landed in PR #146 / #135 — `unwrap_sak`
-/// is no longer stubbed). Until #133 lands, this pins the
+/// The EAP method factory landed (#133, 2026-08-14) so `Supplicant::new`
+/// loads PEM-based EAP methods from config. Under follow-up **F-INT-1**
+/// this test grows assertions on the full live EAP-TLS handshake and SAK
+/// install path (AES Key Wrap landed in PR #146 / #135 — `unwrap_sak` is
+/// no longer stubbed). Until F-INT-1 lands, this pins the
 /// *infrastructure* contract — the stack composes, the certs validate,
 /// the veth wiring works, and the binary reaches `event loop started`.
 #[test]
@@ -160,10 +162,10 @@ fn interop_freeradius_smoke() {
         supp_status.code()
     );
 
-    // TODO(#133): once the EAP method factory lands, parse the
-    // supplicant log for an EAP-Success event and assert PAE reached
-    // Authenticated against the real RADIUS server. AES Key Wrap
-    // (`unwrap_sak`) landed in PR #146 (#135), so the same test can
+    // TODO(F-INT-1): the EAP method factory landed (#133, 2026-08-14),
+    // so parse the supplicant log for an EAP-Success event and assert
+    // PAE reached Authenticated against the real RADIUS server. AES Key
+    // Wrap (`unwrap_sak`) landed in PR #146 (#135), so the same test can
     // also assert that an authenticator-distributed SAK drives
     // CP -> Secured (if hostapd ever gains MKA for wired mode).
 }
