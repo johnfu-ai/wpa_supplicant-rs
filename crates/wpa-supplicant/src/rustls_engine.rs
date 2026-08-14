@@ -192,11 +192,18 @@ impl TlsEngine for RustlsTlsEngine {
             return Err(EapError::TlsError("handshake not complete".into()));
         }
 
-        // Per RFC 5216 §2.3 (TLS 1.2) / RFC 9190 §2.3 (TLS 1.3):
-        // Key_Material = TLS-Exporter("EXPORTER_EAP_TLS_Key_Material",
-        // Type, 128) — the EAP Type code (0x0D) is the exporter
-        // *context*. First 64 bytes = MSK, next 64 = EMSK. The `Msk`
-        // type enforces >= 64 bytes at construction.
+        // Per RFC 9190 §2.3 (TLS 1.3): Key_Material =
+        // TLS-Exporter("EXPORTER_EAP_TLS_Key_Material", Type, 128) —
+        // the EAP Type code (0x0D) is the exporter *context*. First
+        // 64 bytes = MSK, next 64 = EMSK. The `Msk` type enforces
+        // >= 64 bytes at construction.
+        //
+        // Scope note: RFC 9190 scopes this exporter derivation to
+        // TLS 1.3. Under TLS 1.2, RFC 5216 §2.3 prescribes a PRF
+        // derivation over the handshake randoms instead — this engine
+        // reuses the exporter for both versions, so a TLS 1.2 MSK will
+        // not match an RFC 5216-conformant peer (tracked as #179,
+        // surfaced for F-INT-1). rustls negotiates TLS 1.3 by default.
         let mut key_material = vec![0u8; 128];
         conn.export_keying_material(
             &mut key_material,
