@@ -29,10 +29,16 @@ const TLS_FLAGS_MORE_FRAGMENTS: u8 = 0x40;
 const TLS_FLAGS_START: u8 = 0x20;
 
 /// Maximum outbound TLS data carried in a single EAP-TLS message
-/// (#175 / F-EAP-2, per RFC 5216 §3.1 fragmentation). EAPOL frames are
-/// typically limited by the L2 MTU; 1024 bytes of TLS payload keeps the
-/// encoded EAPOL frame safely under 1500 bytes.
+/// (#175 / REQ-F-EAP-002 / F-EAP-2, per RFC 5216 §3.1 fragmentation).
+/// EAPOL frames are typically limited by the L2 MTU; 1024 bytes of TLS
+/// payload keeps the encoded EAPOL frame safely under 1500 bytes.
 pub const TLS_MAX_FRAGMENT_LEN: usize = 1024;
+
+/// Hard cap on inbound reassembly when the EAP server sends fragments
+/// without the L flag (#175 / REQ-F-EAP-002, RFC 5216 §3.1): a TLS
+/// record is at most 16 KiB of plaintext plus TLS 1.3 record margin,
+/// so anything larger is a hostile or broken peer.
+pub const TLS_MAX_REASSEMBLY_LEN: usize = 16 * 1024 + 2 * 1024;
 
 /// TLS engine trait — abstracts TLS library operations.
 ///
@@ -127,6 +133,13 @@ pub struct EapTls {
     /// Outbound flight larger than one fragment (#175 / RFC 5216 §3.1):
     /// the full flight and the offset of the next fragment to send.
     outbound: Option<(Vec<u8>, usize)>,
+    /// Start offset of the outbound fragment last sent, so a
+    /// retransmitted request (same Identifier, RFC 3748 §4.1) replays
+    /// the identical fragment instead of advancing.
+    outbound_retry: Option<usize>,
+    /// Identifier of the last EAP request handled (RFC 3748 §4.1
+    /// retransmission detection).
+    last_identifier: Option<u8>,
 }
 
 impl EapTls {
@@ -140,6 +153,8 @@ impl EapTls {
             inbound_fragments: Vec::new(),
             expected_inbound_len: None,
             outbound: None,
+            outbound_retry: None,
+            last_identifier: None,
         }
     }
 
@@ -217,7 +232,7 @@ impl EapTls {
     /// Queue an outbound engine flight and emit the first EAP-TLS response
     /// for it (#175 / RFC 5216 §3.1). Flights within one fragment go out
     /// whole; larger flights are split and continued via
-    /// [`Self::next_outbound_fragment`] on the server's flags-only ACKs.
+    /// [`Self::next_outbound_fragment`] on the EAP server's flags-only ACKs.
     fn enqueue_outbound(&mut self, out: Vec<u8>) -> Result<EapMethodOutput, EapError> {
         if out.len() <= TLS_MAX_FRAGMENT_LEN {
             return Ok(EapMethodOutput::Respond {
@@ -235,13 +250,14 @@ impl EapTls {
     /// Returns `EapError::TlsError` when called with no flight pending
     /// (protocol sequencing violation).
     fn next_outbound_fragment(&mut self) -> Result<EapMethodOutput, EapError> {
-        let (chunk, more, total_len) = match self.outbound.as_ref() {
+        let (chunk, more, total_len, start) = match self.outbound.as_ref() {
             Some((flight, offset)) => {
                 let end = (*offset + TLS_MAX_FRAGMENT_LEN).min(flight.len());
                 (
                     flight[*offset..end].to_vec(),
                     end < flight.len(),
                     flight.len(),
+                    *offset,
                 )
             }
             None => {
@@ -250,11 +266,13 @@ impl EapTls {
                 ));
             }
         };
+        self.outbound_retry = Some(start);
         if let Some((_, offset)) = self.outbound.as_mut() {
             *offset += chunk.len();
         }
         if !more {
             self.outbound = None;
+            self.outbound_retry = None;
         }
         Ok(EapMethodOutput::Respond {
             eap_type: EapType::Tls,
@@ -270,10 +288,16 @@ impl EapMethod for EapTls {
 
     fn handle_request(
         &mut self,
-        _identifier: u8,
+        identifier: u8,
         data: &[u8],
         ctx: &dyn EapContext,
     ) -> Result<EapMethodOutput, EapError> {
+        // RFC 3748 §4.1: a retransmitted EAP request reuses its
+        // Identifier. Fragmentation state must be idempotent under
+        // retransmission (#175).
+        let is_retransmit = self.last_identifier == Some(identifier);
+        self.last_identifier = Some(identifier);
+
         let (flags, has_length, tls_data) = Self::parse_tls_data(data)?;
         let is_start = (flags & TLS_FLAGS_START) != 0;
         let more_fragments = (flags & TLS_FLAGS_MORE_FRAGMENTS) != 0;
@@ -334,13 +358,25 @@ impl EapMethod for EapTls {
             }
             EapTlsState::Handshake => {
                 // Outbound fragmentation continuation (#175 / RFC 5216
-                // §3.1): a flags-only request from the server solicits
-                // the next pending fragment of our own flight.
+                // §3.1): a flags-only request from the EAP server
+                // solicits the next pending fragment of our own flight.
                 if self.outbound.is_some() {
                     if !tls_data.is_empty() {
                         return Err(EapError::InvalidPacket(
                             "EAP-TLS: unexpected TLS data while outbound fragments pending".into(),
                         ));
+                    }
+                    if is_retransmit {
+                        // RFC 3748 §4.1 retransmission — rewind to the
+                        // start of the fragment last sent and replay it.
+                        if let Some(start) = self.outbound_retry {
+                            if let Some((_, offset)) = self.outbound.as_mut() {
+                                *offset = start;
+                            }
+                        }
+                    } else {
+                        // Fresh request: the previous fragment was acked.
+                        self.outbound_retry = None;
                     }
                     return self.next_outbound_fragment();
                 }
@@ -350,8 +386,34 @@ impl EapMethod for EapTls {
                 // flags-only response; the engine only sees the whole
                 // message once the final fragment (no M flag) arrives.
                 if more_fragments {
+                    if is_retransmit && !self.inbound_fragments.is_empty() {
+                        // RFC 3748 §4.1 retransmission — restart
+                        // accumulation rather than duplicating.
+                        self.inbound_fragments.clear();
+                        self.expected_inbound_len = None;
+                    }
                     if let Some(announced) = announced_len {
                         self.expected_inbound_len = Some(announced);
+                    }
+                    // Bound the reassembly buffer: never beyond the
+                    // announced length when known, and never beyond the
+                    // hard cap (hostile / broken EAP server).
+                    let new_len = self.inbound_fragments.len() + tls_data.len();
+                    if let Some(announced) = self.expected_inbound_len {
+                        if new_len > announced as usize {
+                            self.inbound_fragments.clear();
+                            self.expected_inbound_len = None;
+                            return Err(EapError::InvalidPacket(format!(
+                                "EAP-TLS: fragment total {new_len} exceeds announced {announced}"
+                            )));
+                        }
+                    }
+                    if new_len > TLS_MAX_REASSEMBLY_LEN {
+                        self.inbound_fragments.clear();
+                        self.expected_inbound_len = None;
+                        return Err(EapError::InvalidPacket(format!(
+                            "EAP-TLS: reassembly total {new_len} exceeds cap {TLS_MAX_REASSEMBLY_LEN}"
+                        )));
                     }
                     self.inbound_fragments.extend_from_slice(tls_data);
                     return Ok(EapMethodOutput::Respond {
@@ -419,6 +481,8 @@ impl EapMethod for EapTls {
         self.inbound_fragments.clear();
         self.expected_inbound_len = None;
         self.outbound = None;
+        self.outbound_retry = None;
+        self.last_identifier = None;
         if let Ok(mut engine) = self.engine.lock() {
             engine.reset();
         }
@@ -807,7 +871,7 @@ mod tests {
     /// Verifies: #175 (REQ-F-EAP-002) — F-EAP-2
     /// Per RFC 5216 §3.1: a peer TLS flight larger than one fragment is
     /// split across multiple EAP-TLS responses (M flag on all but the
-    /// last, L flag with the total length); the server's flags-only
+    /// last, L flag with the total length); the EAP server's flags-only
     /// requests solicit the continuation fragments.
     #[test]
     fn test_eap_tls_fragments_large_outbound_flight() {
@@ -834,7 +898,7 @@ mod tests {
         assert_eq!(&chunk1[1..5], &(big.len() as u32).to_be_bytes());
         assert_eq!(&chunk1[5..], &big[..TLS_MAX_FRAGMENT_LEN]);
 
-        // Server ACK (flags-only request) → second fragment.
+        // EAP server ACK (flags-only request) → second fragment.
         let result = method.handle_request(2, &[0x00], &ctx).unwrap();
         let chunk2 = match result {
             EapMethodOutput::Respond { data, .. } => data,
@@ -849,11 +913,141 @@ mod tests {
             &big[TLS_MAX_FRAGMENT_LEN..2 * TLS_MAX_FRAGMENT_LEN]
         );
 
-        // Server ACK → final fragment, no M flag.
+        // EAP server ACK → final fragment, no M flag.
         let result = method.handle_request(3, &[0x00], &ctx).unwrap();
         let chunk3 = match result {
             EapMethodOutput::Respond { data, .. } => data,
             _ => panic!("expected Respond, got {result:?}"),
+        };
+        assert_eq!(chunk3[0] & TLS_FLAGS_MORE_FRAGMENTS, 0);
+        assert_eq!(&chunk3[5..], &big[2 * TLS_MAX_FRAGMENT_LEN..]);
+    }
+
+    /// Verifies: #175 (REQ-F-EAP-002) — F-EAP-2 hardening
+    /// Per RFC 5216 §3.1: a fragment whose accumulated total exceeds the
+    /// L-flag announced message length is rejected immediately (a hostile
+    /// or misbehaving EAP server must not grow the reassembly buffer
+    /// past the announced bound).
+    #[test]
+    fn test_eap_tls_rejects_fragment_overrun_of_announced_length() {
+        let engine = Arc::new(std::sync::Mutex::new(MockRecordingEngine::new()));
+        let method_engine: Arc<std::sync::Mutex<dyn TlsEngine>> = engine.clone();
+        let mut method = EapTls::new(method_engine);
+        let ctx = MockContext::new();
+
+        method.handle_request(1, &[TLS_FLAGS_START], &ctx).unwrap();
+
+        // Announce 4 bytes but carry 6 with the M flag still set.
+        let mut overrun = vec![TLS_FLAGS_LENGTH_INCLUDED | TLS_FLAGS_MORE_FRAGMENTS];
+        overrun.extend_from_slice(&4u32.to_be_bytes());
+        overrun.extend_from_slice(&[0xA0; 6]);
+        match method.handle_request(2, &overrun, &ctx) {
+            Err(EapError::InvalidPacket(msg)) => {
+                assert!(msg.contains("announced"), "unexpected message: {msg}");
+            }
+            other => panic!("expected InvalidPacket, got {other:?}"),
+        }
+    }
+
+    /// Verifies: #175 (REQ-F-EAP-002) — F-EAP-2 hardening
+    /// Per RFC 5216 §3.1: without an L flag, reassembly is bounded by a
+    /// hard cap (max TLS record size + margin) so an EAP server sending
+    /// endless M-flag fragments cannot grow the buffer unboundedly.
+    #[test]
+    fn test_eap_tls_caps_reassembly_without_length_flag() {
+        let engine = Arc::new(std::sync::Mutex::new(MockRecordingEngine::new()));
+        let method_engine: Arc<std::sync::Mutex<dyn TlsEngine>> = engine.clone();
+        let mut method = EapTls::new(method_engine);
+        let ctx = MockContext::new();
+
+        method.handle_request(1, &[TLS_FLAGS_START], &ctx).unwrap();
+
+        // Feed M-flag fragments without an L flag; the cumulative total
+        // must never exceed TLS_MAX_REASSEMBLY_LEN.
+        let frag = vec![TLS_FLAGS_MORE_FRAGMENTS; 1 + TLS_MAX_FRAGMENT_LEN];
+        let max_frags = TLS_MAX_REASSEMBLY_LEN / TLS_MAX_FRAGMENT_LEN;
+        let mut saw_error = false;
+        for id in 0..=(max_frags as u8) {
+            if method.handle_request(id + 2, &frag, &ctx).is_err() {
+                saw_error = true;
+                break;
+            }
+        }
+        assert!(
+            saw_error,
+            "reassembly must be rejected once the hard cap is exceeded"
+        );
+    }
+
+    /// Verifies: #175 (REQ-F-EAP-002) — F-EAP-2 hardening
+    /// Per RFC 3748 §4.1, a retransmitted EAP request reuses its
+    /// Identifier. A retransmitted fragment must restart reassembly
+    /// rather than be appended a second time.
+    #[test]
+    fn test_eap_tls_retransmitted_fragment_restarts_reassembly() {
+        let engine = Arc::new(std::sync::Mutex::new(MockRecordingEngine::new()));
+        let method_engine: Arc<std::sync::Mutex<dyn TlsEngine>> = engine.clone();
+        let mut method = EapTls::new(method_engine);
+        let ctx = MockContext::new();
+
+        method.handle_request(1, &[TLS_FLAGS_START], &ctx).unwrap();
+
+        let msg: Vec<u8> = (0u8..10).collect();
+        let (frag1, frag2) = msg.split_at(6);
+        let mut req1 = vec![TLS_FLAGS_LENGTH_INCLUDED | TLS_FLAGS_MORE_FRAGMENTS];
+        req1.extend_from_slice(&(msg.len() as u32).to_be_bytes());
+        req1.extend_from_slice(frag1);
+
+        // Original fragment 1, then the EAP server retransmits it (same
+        // Identifier) after a lost ACK.
+        method.handle_request(2, &req1, &ctx).unwrap();
+        method.handle_request(2, &req1, &ctx).unwrap();
+
+        // Final fragment: the engine must see exactly one copy of frag1.
+        let req2 = [vec![0x00], frag2.to_vec()].concat();
+        let result = method.handle_request(3, &req2, &ctx).unwrap();
+        assert!(matches!(result, EapMethodOutput::Success { .. }));
+
+        let received = engine.lock().unwrap().received.clone();
+        assert_eq!(
+            received,
+            vec![Vec::new(), msg],
+            "retransmitted fragment must restart, not duplicate, reassembly"
+        );
+    }
+
+    /// Verifies: #175 (REQ-F-EAP-002) — F-EAP-2 hardening
+    /// Per RFC 3748 §4.1, a retransmitted flags-only request (same
+    /// Identifier) must elicit the *same* outbound fragment again, not
+    /// advance to the next one.
+    #[test]
+    fn test_eap_tls_retransmitted_ack_replays_same_fragment() {
+        let big = vec![0xAB; 2 * TLS_MAX_FRAGMENT_LEN + 300]; // 3 chunks
+        let engine = Arc::new(std::sync::Mutex::new(MockBigFlightEngine::new(big.clone())));
+        let mut method = EapTls::new(engine);
+        let ctx = MockContext::new();
+
+        method.handle_request(1, &[TLS_FLAGS_START], &ctx).unwrap();
+
+        // ACK (id 2) → fragment 2; retransmitted ACK (id 2 again) must
+        // replay fragment 2 byte-for-byte.
+        let chunk2 = match method.handle_request(2, &[0x00], &ctx).unwrap() {
+            EapMethodOutput::Respond { data, .. } => data,
+            other => panic!("expected Respond, got {other:?}"),
+        };
+        let replay = match method.handle_request(2, &[0x00], &ctx).unwrap() {
+            EapMethodOutput::Respond { data, .. } => data,
+            other => panic!("expected Respond, got {other:?}"),
+        };
+        assert_eq!(
+            chunk2, replay,
+            "retransmitted ACK must replay the same fragment"
+        );
+
+        // Fresh ACK (id 3) advances to the final fragment.
+        let chunk3 = match method.handle_request(3, &[0x00], &ctx).unwrap() {
+            EapMethodOutput::Respond { data, .. } => data,
+            other => panic!("expected Respond, got {other:?}"),
         };
         assert_eq!(chunk3[0] & TLS_FLAGS_MORE_FRAGMENTS, 0);
         assert_eq!(&chunk3[5..], &big[2 * TLS_MAX_FRAGMENT_LEN..]);
