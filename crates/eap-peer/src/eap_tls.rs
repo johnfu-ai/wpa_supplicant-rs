@@ -28,6 +28,12 @@ const TLS_FLAGS_LENGTH_INCLUDED: u8 = 0x80;
 const TLS_FLAGS_MORE_FRAGMENTS: u8 = 0x40;
 const TLS_FLAGS_START: u8 = 0x20;
 
+/// Maximum outbound TLS data carried in a single EAP-TLS message
+/// (#175 / F-EAP-2, per RFC 5216 §3.1 fragmentation). EAPOL frames are
+/// typically limited by the L2 MTU; 1024 bytes of TLS payload keeps the
+/// encoded EAPOL frame safely under 1500 bytes.
+pub const TLS_MAX_FRAGMENT_LEN: usize = 1024;
+
 /// TLS engine trait — abstracts TLS library operations.
 ///
 /// Per ADR-SM-002 (#74): trait-based dependency injection.
@@ -113,6 +119,14 @@ pub struct EapTls {
     msk: Option<pae::Msk>,
     /// Whether the last result was a failure.
     failed: bool,
+    /// Inbound fragment reassembly buffer (#175 / RFC 5216 §3.1):
+    /// accumulates server TLS data across requests carrying the M flag.
+    inbound_fragments: Vec<u8>,
+    /// Total inbound message length announced via the L flag, if seen.
+    expected_inbound_len: Option<u32>,
+    /// Outbound flight larger than one fragment (#175 / RFC 5216 §3.1):
+    /// the full flight and the offset of the next fragment to send.
+    outbound: Option<(Vec<u8>, usize)>,
 }
 
 impl EapTls {
@@ -123,6 +137,9 @@ impl EapTls {
             engine,
             msk: None,
             failed: false,
+            inbound_fragments: Vec::new(),
+            expected_inbound_len: None,
+            outbound: None,
         }
     }
 
@@ -181,6 +198,69 @@ impl EapTls {
         payload.extend_from_slice(tls_data);
         payload
     }
+
+    /// Build a single outbound-fragment response payload
+    /// (#175 / RFC 5216 §3.1): L flag with the *total* flight length,
+    /// M flag on all but the last fragment.
+    fn build_fragment_payload(total_len: usize, chunk: &[u8], more: bool) -> Vec<u8> {
+        let mut flags = TLS_FLAGS_LENGTH_INCLUDED;
+        if more {
+            flags |= TLS_FLAGS_MORE_FRAGMENTS;
+        }
+        let mut payload = Vec::with_capacity(5 + chunk.len());
+        payload.push(flags);
+        payload.extend_from_slice(&(total_len as u32).to_be_bytes());
+        payload.extend_from_slice(chunk);
+        payload
+    }
+
+    /// Queue an outbound engine flight and emit the first EAP-TLS response
+    /// for it (#175 / RFC 5216 §3.1). Flights within one fragment go out
+    /// whole; larger flights are split and continued via
+    /// [`Self::next_outbound_fragment`] on the server's flags-only ACKs.
+    fn enqueue_outbound(&mut self, out: Vec<u8>) -> Result<EapMethodOutput, EapError> {
+        if out.len() <= TLS_MAX_FRAGMENT_LEN {
+            return Ok(EapMethodOutput::Respond {
+                eap_type: EapType::Tls,
+                data: Self::build_response_payload(&out, false),
+            });
+        }
+        self.outbound = Some((out, 0));
+        self.next_outbound_fragment()
+    }
+
+    /// Emit the next pending outbound fragment, if any.
+    ///
+    /// # Errors
+    /// Returns `EapError::TlsError` when called with no flight pending
+    /// (protocol sequencing violation).
+    fn next_outbound_fragment(&mut self) -> Result<EapMethodOutput, EapError> {
+        let (chunk, more, total_len) = match self.outbound.as_ref() {
+            Some((flight, offset)) => {
+                let end = (*offset + TLS_MAX_FRAGMENT_LEN).min(flight.len());
+                (
+                    flight[*offset..end].to_vec(),
+                    end < flight.len(),
+                    flight.len(),
+                )
+            }
+            None => {
+                return Err(EapError::TlsError(
+                    "EAP-TLS: no outbound fragment pending".into(),
+                ));
+            }
+        };
+        if let Some((_, offset)) = self.outbound.as_mut() {
+            *offset += chunk.len();
+        }
+        if !more {
+            self.outbound = None;
+        }
+        Ok(EapMethodOutput::Respond {
+            eap_type: EapType::Tls,
+            data: Self::build_fragment_payload(total_len, &chunk, more),
+        })
+    }
 }
 
 impl EapMethod for EapTls {
@@ -194,8 +274,17 @@ impl EapMethod for EapTls {
         data: &[u8],
         ctx: &dyn EapContext,
     ) -> Result<EapMethodOutput, EapError> {
-        let (flags, _has_length, tls_data) = Self::parse_tls_data(data)?;
+        let (flags, has_length, tls_data) = Self::parse_tls_data(data)?;
         let is_start = (flags & TLS_FLAGS_START) != 0;
+        let more_fragments = (flags & TLS_FLAGS_MORE_FRAGMENTS) != 0;
+        // Total inbound message length announced via the L flag (RFC 5216
+        // §3.1). parse_tls_data guarantees bytes 1..5 exist when the L
+        // flag is set.
+        let announced_len = if has_length {
+            Some(u32::from_be_bytes([data[1], data[2], data[3], data[4]]))
+        } else {
+            None
+        };
 
         match self.state {
             EapTlsState::Initial => {
@@ -223,10 +312,10 @@ impl EapMethod for EapTls {
                 };
 
                 match response_data {
-                    Some(out) => Ok(EapMethodOutput::Respond {
-                        eap_type: EapType::Tls,
-                        data: Self::build_response_payload(&out, false),
-                    }),
+                    Some(out) => {
+                        drop(engine);
+                        self.enqueue_outbound(out)
+                    }
                     None => {
                         // Handshake complete in one round (unlikely but possible)
                         self.state = EapTlsState::Established;
@@ -244,18 +333,63 @@ impl EapMethod for EapTls {
                 }
             }
             EapTlsState::Handshake => {
+                // Outbound fragmentation continuation (#175 / RFC 5216
+                // §3.1): a flags-only request from the server solicits
+                // the next pending fragment of our own flight.
+                if self.outbound.is_some() {
+                    if !tls_data.is_empty() {
+                        return Err(EapError::InvalidPacket(
+                            "EAP-TLS: unexpected TLS data while outbound fragments pending".into(),
+                        ));
+                    }
+                    return self.next_outbound_fragment();
+                }
+
+                // Inbound reassembly (#175 / RFC 5216 §3.1): fragments
+                // carrying the M flag are buffered and ACKed with a
+                // flags-only response; the engine only sees the whole
+                // message once the final fragment (no M flag) arrives.
+                if more_fragments {
+                    if let Some(announced) = announced_len {
+                        self.expected_inbound_len = Some(announced);
+                    }
+                    self.inbound_fragments.extend_from_slice(tls_data);
+                    return Ok(EapMethodOutput::Respond {
+                        eap_type: EapType::Tls,
+                        data: Self::build_response_payload(&[], false),
+                    });
+                }
+
+                let inbound = if self.inbound_fragments.is_empty() {
+                    tls_data.to_vec()
+                } else {
+                    self.inbound_fragments.extend_from_slice(tls_data);
+                    if let Some(announced) = self.expected_inbound_len {
+                        if self.inbound_fragments.len() != announced as usize {
+                            let got = self.inbound_fragments.len();
+                            self.inbound_fragments.clear();
+                            self.expected_inbound_len = None;
+                            return Err(EapError::InvalidPacket(format!(
+                                "EAP-TLS: reassembled length {got} != announced {announced}"
+                            )));
+                        }
+                    }
+                    self.expected_inbound_len = None;
+                    std::mem::take(&mut self.inbound_fragments)
+                };
+
                 let mut engine = self
                     .engine
                     .lock()
                     .map_err(|_| EapError::TlsError("TLS engine lock poisoned".into()))?;
 
-                let response_data = engine.process_server_data(tls_data)?;
+                let response_data = engine.process_server_data(&inbound)?;
 
                 match response_data {
-                    Some(out) => Ok(EapMethodOutput::Respond {
-                        eap_type: EapType::Tls,
-                        data: Self::build_response_payload(&out, false),
-                    }),
+                    Some(out) => {
+                        drop(engine);
+                        self.enqueue_outbound(out)
+                    }
                     None => {
                         // Handshake complete
                         self.state = EapTlsState::Established;
@@ -282,6 +416,9 @@ impl EapMethod for EapTls {
         self.state = EapTlsState::Initial;
         self.msk = None;
         self.failed = false;
+        self.inbound_fragments.clear();
+        self.expected_inbound_len = None;
+        self.outbound = None;
         if let Ok(mut engine) = self.engine.lock() {
             engine.reset();
         }
@@ -362,6 +499,99 @@ mod tests {
         /// Simulated TLS 1.2 session ID (RFC 5216 §1.4 F-EAP-1 test).
         fn session_id(&self) -> Option<Vec<u8>> {
             Some(vec![0x5E, 0x55, 0x1D, 0xC0, 0xDE])
+        }
+    }
+
+    /// Mock TLS engine that records every buffer handed to
+    /// `process_server_data` and completes on its second call
+    /// (F-EAP-2 reassembly test, #175).
+    struct MockRecordingEngine {
+        calls: u8,
+        received: Vec<Vec<u8>>,
+    }
+
+    impl MockRecordingEngine {
+        fn new() -> Self {
+            Self {
+                calls: 0,
+                received: Vec::new(),
+            }
+        }
+    }
+
+    impl TlsEngine for MockRecordingEngine {
+        fn init_session(&mut self, _config: &TlsClientConfig) -> Result<(), EapError> {
+            Ok(())
+        }
+
+        fn process_server_data(&mut self, data: &[u8]) -> Result<Option<Vec<u8>>, EapError> {
+            self.calls += 1;
+            self.received.push(data.to_vec());
+            if self.calls >= 2 {
+                Ok(None) // handshake complete
+            } else {
+                Ok(Some(vec![0x01, 0x02, 0x03])) // ClientHello
+            }
+        }
+
+        fn is_handshake_complete(&self) -> bool {
+            self.calls >= 2
+        }
+
+        fn derive_msk(&mut self) -> Result<pae::Msk, EapError> {
+            pae::Msk::from_bytes(vec![0xCD; 64]).map_err(|e| EapError::TlsError(e.to_string()))
+        }
+
+        fn reset(&mut self) {
+            self.calls = 0;
+            self.received.clear();
+        }
+    }
+
+    /// Mock TLS engine whose first flight exceeds one fragment
+    /// (F-EAP-2 outbound-fragmentation test, #175).
+    struct MockBigFlightEngine {
+        flight: Vec<u8>,
+        sent: bool,
+        finished: bool,
+    }
+
+    impl MockBigFlightEngine {
+        fn new(flight: Vec<u8>) -> Self {
+            Self {
+                flight,
+                sent: false,
+                finished: false,
+            }
+        }
+    }
+
+    impl TlsEngine for MockBigFlightEngine {
+        fn init_session(&mut self, _config: &TlsClientConfig) -> Result<(), EapError> {
+            Ok(())
+        }
+
+        fn process_server_data(&mut self, _data: &[u8]) -> Result<Option<Vec<u8>>, EapError> {
+            if !self.sent {
+                self.sent = true;
+                Ok(Some(std::mem::take(&mut self.flight)))
+            } else {
+                self.finished = true;
+                Ok(None)
+            }
+        }
+
+        fn is_handshake_complete(&self) -> bool {
+            self.finished
+        }
+
+        fn derive_msk(&mut self) -> Result<pae::Msk, EapError> {
+            pae::Msk::from_bytes(vec![0xCD; 64]).map_err(|e| EapError::TlsError(e.to_string()))
+        }
+
+        fn reset(&mut self) {
+            self.sent = false;
+            self.finished = false;
         }
     }
 
@@ -518,6 +748,115 @@ mod tests {
             }
             _ => panic!("expected Success, got {:?}", result),
         }
+    }
+
+    /// Verifies: #175 (REQ-F-EAP-002) — F-EAP-2
+    /// Per RFC 5216 §3.1: a server TLS message split across multiple
+    /// EAP-TLS requests (M flag set on all but the last) is reassembled
+    /// before being handed to the TLS engine. Intermediate fragments are
+    /// answered with a flags-only acknowledgment.
+    #[test]
+    fn test_eap_tls_reassembles_fragmented_server_message() {
+        let engine = Arc::new(std::sync::Mutex::new(MockRecordingEngine::new()));
+        let method_engine: Arc<std::sync::Mutex<dyn TlsEngine>> = engine.clone();
+        let mut method = EapTls::new(method_engine);
+        let ctx = MockContext::new();
+
+        // Step 1: TLS-Start → engine emits ClientHello.
+        let result = method.handle_request(1, &[TLS_FLAGS_START], &ctx).unwrap();
+        assert!(matches!(result, EapMethodOutput::Respond { .. }));
+
+        // A 10-byte server TLS message split into two fragments.
+        let msg: Vec<u8> = (0u8..10).collect();
+        let (frag1, frag2) = msg.split_at(6);
+
+        // Fragment 1: L flag (length present) + M flag (more follow).
+        let mut req1 = vec![TLS_FLAGS_LENGTH_INCLUDED | TLS_FLAGS_MORE_FRAGMENTS];
+        req1.extend_from_slice(&(msg.len() as u32).to_be_bytes());
+        req1.extend_from_slice(frag1);
+        let result = method.handle_request(2, &req1, &ctx).unwrap();
+        match result {
+            EapMethodOutput::Respond { data, .. } => {
+                // Flags-only ACK: no TLS payload until the last fragment.
+                assert_eq!(
+                    data.len(),
+                    1,
+                    "intermediate fragment must be ACKed with a flags-only response"
+                );
+                assert_eq!(data[0] & TLS_FLAGS_MORE_FRAGMENTS, 0);
+            }
+            _ => panic!("expected Respond ACK, got {result:?}"),
+        }
+
+        // Fragment 2 (final): engine must receive the reassembled whole.
+        let req2 = [vec![0x00], frag2.to_vec()].concat();
+        let result = method.handle_request(3, &req2, &ctx).unwrap();
+        assert!(
+            matches!(result, EapMethodOutput::Success { .. }),
+            "handshake completes after the final fragment, got {result:?}"
+        );
+
+        let received = engine.lock().unwrap().received.clone();
+        assert_eq!(
+            received,
+            vec![Vec::new(), msg],
+            "engine must see the ClientHello kick and the single reassembled message"
+        );
+    }
+
+    /// Verifies: #175 (REQ-F-EAP-002) — F-EAP-2
+    /// Per RFC 5216 §3.1: a peer TLS flight larger than one fragment is
+    /// split across multiple EAP-TLS responses (M flag on all but the
+    /// last, L flag with the total length); the server's flags-only
+    /// requests solicit the continuation fragments.
+    #[test]
+    fn test_eap_tls_fragments_large_outbound_flight() {
+        let big = vec![0xAB; 2 * TLS_MAX_FRAGMENT_LEN + 300]; // 3 chunks
+        let engine = Arc::new(std::sync::Mutex::new(MockBigFlightEngine::new(big.clone())));
+        let mut method = EapTls::new(engine);
+        let ctx = MockContext::new();
+
+        // Step 1: TLS-Start → engine produces the big flight.
+        let result = method.handle_request(1, &[TLS_FLAGS_START], &ctx).unwrap();
+        let chunk1 = match result {
+            EapMethodOutput::Respond { data, .. } => data,
+            _ => panic!("expected Respond, got {result:?}"),
+        };
+        // Payload = flags(1) + length(4) + first fragment.
+        assert_eq!(
+            chunk1[0] & TLS_FLAGS_MORE_FRAGMENTS,
+            TLS_FLAGS_MORE_FRAGMENTS
+        );
+        assert_eq!(
+            chunk1[0] & TLS_FLAGS_LENGTH_INCLUDED,
+            TLS_FLAGS_LENGTH_INCLUDED
+        );
+        assert_eq!(&chunk1[1..5], &(big.len() as u32).to_be_bytes());
+        assert_eq!(&chunk1[5..], &big[..TLS_MAX_FRAGMENT_LEN]);
+
+        // Server ACK (flags-only request) → second fragment.
+        let result = method.handle_request(2, &[0x00], &ctx).unwrap();
+        let chunk2 = match result {
+            EapMethodOutput::Respond { data, .. } => data,
+            _ => panic!("expected Respond, got {result:?}"),
+        };
+        assert_eq!(
+            chunk2[0] & TLS_FLAGS_MORE_FRAGMENTS,
+            TLS_FLAGS_MORE_FRAGMENTS
+        );
+        assert_eq!(
+            &chunk2[5..],
+            &big[TLS_MAX_FRAGMENT_LEN..2 * TLS_MAX_FRAGMENT_LEN]
+        );
+
+        // Server ACK → final fragment, no M flag.
+        let result = method.handle_request(3, &[0x00], &ctx).unwrap();
+        let chunk3 = match result {
+            EapMethodOutput::Respond { data, .. } => data,
+            _ => panic!("expected Respond, got {result:?}"),
+        };
+        assert_eq!(chunk3[0] & TLS_FLAGS_MORE_FRAGMENTS, 0);
+        assert_eq!(&chunk3[5..], &big[2 * TLS_MAX_FRAGMENT_LEN..]);
     }
 
     /// Verifies: #39 (REQ-F-EAP-002)
