@@ -64,13 +64,15 @@ pub trait TlsEngine: Send + Sync {
     /// Reset the TLS engine for reauthentication.
     fn reset(&mut self);
 
-    /// The TLS session ID negotiated during the handshake, if any.
+    /// The TLS session identifier for the EAP Session-Id per RFC 5216
+    /// §1.4 / RFC 9190 §2.3.
     ///
-    /// Per RFC 5216 §1.4, the EAP Session-Id is the EAP method type
-    /// byte concatenated with this value. TLS 1.2 exposes the session
-    /// ID directly; TLS 1.3 has no session ID and implementations
-    /// return `None` (callers then use a type-byte-only Session-Id
-    /// until the TLS 1.3 derivation lands).
+    /// Contract: under TLS 1.2 this is the negotiated TLS Session-ID
+    /// (implementations may return `None` when the TLS backend does
+    /// not expose it); under TLS 1.3 it is the 64-octet exporter-derived
+    /// Method-Id. The EAP Session-Id is the EAP method-type byte
+    /// concatenated with this value (`None` degrades it to the type
+    /// byte alone).
     fn session_id(&self) -> Option<Vec<u8>> {
         None
     }
