@@ -133,6 +133,29 @@ impl Default for MacsecConfig {
     }
 }
 
+impl MacsecConfig {
+    /// Map the configured `cipher_suite` string onto the
+    /// [`pae::CipherSuite`] enum per IEEE 802.1X-2020 Cl.9.7 (#176 /
+    /// REQ-F-CP-002). Callers should have already rejected unknown
+    /// values at config load ([`Config::validate`]).
+    ///
+    /// # Errors
+    /// Returns an error naming the offending value if it does not name
+    /// a supported cipher suite.
+    pub fn resolve_cipher_suite(&self) -> Result<pae::CipherSuite, anyhow::Error> {
+        match self.cipher_suite.as_str() {
+            "gcm-aes-128" => Ok(pae::CipherSuite::GcmAes128),
+            "gcm-aes-256" => Ok(pae::CipherSuite::GcmAes256),
+            "gcm-aes-xpn-256" => Ok(pae::CipherSuite::GcmAesXpn256),
+            "null" => Ok(pae::CipherSuite::Null),
+            other => anyhow::bail!(
+                "macsec.cipher_suite: unknown value {other:?} \
+                 (supported: gcm-aes-128, gcm-aes-256, gcm-aes-xpn-256, null)"
+            ),
+        }
+    }
+}
+
 fn default_cipher_suite() -> String {
     "gcm-aes-128".to_string()
 }
@@ -282,6 +305,9 @@ impl Config {
         if self.macsec.hello_time <= 0.0 {
             anyhow::bail!("macsec.hello_time must be positive");
         }
+        // Reject unknown cipher suites at load per #176 — never let a
+        // typo silently fall back to the GcmAes128 default.
+        self.macsec.resolve_cipher_suite()?;
         Ok(())
     }
 }
@@ -639,5 +665,32 @@ dbus_name = "org.example.wpa"
         let config = Config::from_toml(toml).unwrap();
         assert!(matches!(config.control.r#type, ControlType::Dbus));
         assert_eq!(config.control.dbus_name.as_deref(), Some("org.example.wpa"));
+    }
+
+    /// Verifies: #176 (REQ-F-CP-002)
+    /// An unknown `macsec.cipher_suite` value is rejected at config
+    /// load with a clear error — never silently defaulted.
+    #[test]
+    fn test_config_rejects_unknown_cipher_suite() {
+        let toml = r#"
+interface = "eth0"
+
+[eap]
+identity = "alice@example.com"
+
+[eap.method]
+type = "tls"
+cert = "/etc/certs/client.pem"
+key = "/etc/certs/client.key"
+ca = "/etc/certs/ca.pem"
+
+[macsec]
+cipher_suite = "rot13-enigma"
+"#;
+        let err = Config::from_toml(toml).unwrap_err().to_string();
+        assert!(
+            err.contains("cipher_suite"),
+            "error must name the offending field: {err}"
+        );
     }
 }

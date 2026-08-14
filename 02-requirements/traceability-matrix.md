@@ -93,7 +93,7 @@ Previous editions: 2026-06-06 (Phase 05 implementation refresh per `docs/TODO.md
 | REQ-F-CP-001 CP State Machine | #29 | `f56d9c9` | `crates/pae/src/cp.rs` | 15 tests in `cp.rs` | Implemented |
 | REQ-F-CP-002 CP Interface | #30 | `9f29dd9` | `crates/pae/src/cp.rs` | 13 tests in `cp.rs` | Implemented |
 | REQ-F-CP-003 SC/SA Mgmt | #31 | `76c275a` | `crates/pae/src/cp.rs` | 7 tests in `cp.rs` | Implemented |
-| REQ-F-CP-004 MACsec Cipher Suites | #32 | `1385adf` | `crates/pae/src/cp.rs` | 1 dedicated test | Implemented |
+| REQ-F-CP-004 MACsec Cipher Suites | #32 | `1385adf` | `crates/pae/src/cp.rs`, `crates/wpa-supplicant/src/config.rs`, `…/supplicant.rs` | 1 dedicated test + `tests/cipher_suite_wiring.rs` | Implemented + **config wiring landed** (#176 / F-EAP-3: `config.macsec.cipher_suite` maps onto `pae::CipherSuite` per Cl.9.7; unknown values rejected at config load). |
 
 ### REQ-F-LOGON (Clause 12 — Logon Process)
 
