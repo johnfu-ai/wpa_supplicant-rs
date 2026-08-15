@@ -155,6 +155,9 @@ fn test_malformed_eapol_is_dropped_without_panic() {
         0,
         "malformed frames must be dropped before reaching the Supplicant PAE"
     );
-    // PAE state stays at the initial Disconnected.
-    assert_eq!(supp.pae_state(), PaeState::Disconnected);
+    // PAE state stays where boot left it: since the
+    // auto-authentication change (#170 / F-INT-1) the PAE boots into
+    // Connecting when the link is up — a malformed frame must not
+    // knock it out of (or advance it beyond) that state.
+    assert_eq!(supp.pae_state(), PaeState::Connecting);
 }
