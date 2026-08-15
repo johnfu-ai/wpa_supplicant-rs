@@ -26,9 +26,19 @@ struct TestNet {
 
 impl TestNet {
     fn new() -> Self {
+        Self::with_link(true)
+    }
+
+    /// Link-down variant — the PAE boots and stays Disconnected
+    /// (no auto-authentication without a link, #170 / F-INT-1).
+    fn new_link_down() -> Self {
+        Self::with_link(false)
+    }
+
+    fn with_link(link: bool) -> Self {
         Self {
             mac: [0x02, 0x00, 0x00, 0x00, 0x00, 0x01],
-            link: Mutex::new(true),
+            link: Mutex::new(link),
             sent: Mutex::new(Vec::new()),
             inbox: Mutex::new(Vec::new()),
         }
@@ -180,18 +190,20 @@ fn test_reauthenticate_from_invalid_state_is_noop() {
     let net = TestNet::new();
     let mut supp = Supplicant::with_eap_methods(config, net, Vec::new()).unwrap();
 
-    // PAE starts in Disconnected; reauth is not valid here.
-    assert_eq!(supp.pae_state(), PaeState::Disconnected);
+    // Since the auto-authentication change (#170 / F-INT-1) the PAE
+    // boots straight into Connecting when the link is up;
+    // reauth is still invalid here (only valid from Authenticated).
+    assert_eq!(supp.pae_state(), PaeState::Connecting);
 
     let result = supp.handle_command(ControlCommand::Reauthenticate);
     assert!(
         result.is_ok(),
-        "reauthenticate in Disconnected must not error the daemon (got {:?})",
+        "reauthenticate in Connecting must not error the daemon (got {:?})",
         result
     );
     assert_eq!(
         supp.pae_state(),
-        PaeState::Disconnected,
+        PaeState::Connecting,
         "PAE state must be unchanged after an invalid reauthenticate"
     );
 }
@@ -251,7 +263,11 @@ fn test_logoff_from_authenticated_sends_eapol_logoff() {
 #[test]
 fn test_logoff_from_invalid_state_is_noop() {
     let config = make_config();
-    let net = TestNet::new();
+    // Boot with the link DOWN: since the auto-authentication change
+    // (#170 / F-INT-1) the PAE enters Connecting at boot only when
+    // the link is up; with it down the PAE stays Disconnected — the
+    // genuinely-invalid state for Logoff.
+    let net = TestNet::new_link_down();
     let mut supp = Supplicant::with_eap_methods(config, net, Vec::new()).unwrap();
 
     assert_eq!(supp.pae_state(), PaeState::Disconnected);

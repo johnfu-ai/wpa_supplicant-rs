@@ -63,10 +63,10 @@ Previous editions: 2026-06-06 (Phase 05 implementation refresh per `docs/TODO.md
 | REQ | Issue | Closing Commit | Code (file: anchor) | Tests | Status |
 |---|---|---|---|---|---|
 | REQ-F-PAE-001 PACP State Machine | #11 | `0f18bc3` | `crates/eapol-supp/src/lib.rs`, `crates/eapol-supp/src/supplicant_pae.rs` | 12 unit tests in `supplicant_pae.rs` | Implemented |
-| REQ-F-PAE-002 Higher Layer Interface | #12 | `cb54179` | `crates/eapol-supp/src/supplicant_pae.rs` | covered by PACP suite | Implemented |
+| REQ-F-PAE-002 Higher Layer Interface | #12 | `cb54179` | `crates/eapol-supp/src/supplicant_pae.rs`, `crates/wpa-supplicant/src/supplicant.rs` | covered by PACP suite + `crates/wpa-supplicant/tests/auto_authenticate.rs` | Implemented + **daemon PAE-client wiring landed** (#187: `Supplicant::build` sets Cl.8.4 `authenticate` at construction and notifies `link_changed(true)` at boot when the link is up — the daemon acts as the PAE client, Logon Process role; found during the F-INT-1 / #170 live run where the PAE idled in Disconnected because in-tree tests masked the gap via the `pae_set_authenticate` shim). |
 | REQ-F-PAE-003 Client Interface | #13 | `cb54179` | `crates/eapol-supp/src/supplicant_pae.rs` | covered by PACP suite | Implemented |
 | REQ-F-PAE-004 Timers | #14 | `cb54179` | `crates/eapol-supp/src/supplicant_pae.rs` | covered by PACP suite | Implemented |
-| REQ-F-PAE-005 EAPOL-Start Tx | #15 | `cb54179` | `crates/eapol-supp/src/supplicant_pae.rs`, `…/transmitter.rs` | covered by PACP + transmitter suites | Implemented |
+| REQ-F-PAE-005 EAPOL-Start Tx | #15 | `cb54179` | `crates/eapol-supp/src/supplicant_pae.rs`, `…/transmitter.rs` | covered by PACP + transmitter suites + `crates/wpa-supplicant/tests/auto_authenticate.rs` | Implemented + **boot auto-start** (#187: EAPOL-Start is on the wire from construction when the link is up — no control command needed; advance to Authenticating on EAP-Request/Identity fenced by integration test). |
 | REQ-F-PAE-006 EAPOL-Logoff Tx | #16 | `cb54179` | `crates/eapol-supp/src/supplicant_pae.rs`, `…/transmitter.rs` | covered by PACP + transmitter suites | Implemented |
 | REQ-F-PAE-007 Retry Control | #17 | `cb54179` | `crates/eapol-supp/src/supplicant_pae.rs` | covered by PACP suite | Implemented |
 | REQ-F-PAE-008 PAE Counters | #18 | `cb54179` | `crates/eapol-supp/src/supplicant_pae.rs` | covered by PACP suite | Implemented |

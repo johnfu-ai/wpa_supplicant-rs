@@ -10,11 +10,13 @@
 use std::sync::Mutex;
 
 use anyhow::Result;
+use eapol_supp::frame::{EapolFrame, EapolPacketType, EapolVersion};
 use wpa_supplicant::{Config, NetworkIo, Supplicant, SupplicantState};
 
 struct TestNet {
     mac: [u8; 6],
     link: Mutex<bool>,
+    inbox: Mutex<Vec<Vec<u8>>>,
 }
 
 impl TestNet {
@@ -22,7 +24,13 @@ impl TestNet {
         Self {
             mac: [0x02, 0x00, 0x00, 0x00, 0x00, 0x01],
             link: Mutex::new(true),
+            inbox: Mutex::new(Vec::new()),
         }
+    }
+
+    /// Queue a frame for reception.
+    fn enqueue(&self, frame: Vec<u8>) {
+        self.inbox.lock().unwrap().push(frame);
     }
 }
 
@@ -31,7 +39,7 @@ impl NetworkIo for TestNet {
         Ok(())
     }
     fn recv_eapol(&self) -> Result<Option<Vec<u8>>> {
-        Ok(None)
+        Ok(self.inbox.lock().unwrap().pop())
     }
     fn mac_address(&self) -> [u8; 6] {
         self.mac
@@ -98,32 +106,46 @@ fn test_state_json_round_trip_schema_stable() {
 /// Per IEEE 802.1X-2020 Clause 8.3 and INT-002 (#110).
 ///
 /// The `pae_state` field in `Supplicant::state()` reflects the live
-/// Supplicant PAE state — not a hardcoded default. After a
-/// `pae_set_authenticate(true) + tick()` sequence the PAE moves to
-/// `Connecting` per Cl.8.3 (the tick loop drives `pae.step()` per
-/// INT-003 / #111), and the JSON must record that.
+/// Supplicant PAE state — not a hardcoded default. Since #187 the PAE
+/// auto-starts at construction (link up → `Connecting`, Cl.8.4), and a
+/// consumed EAP-Request/Identity moves it to `Authenticating` per
+/// Cl.8.3 (the tick loop drives `pae.step()` per INT-003 / #111) — the
+/// JSON must record both.
 #[test]
 fn test_state_pae_field_is_live() {
     let config = make_config();
     let net = TestNet::new();
+    // Queue an EAP-Request/Identity up front; the tick below consumes
+    // it and advances Connecting -> Authenticating per Cl.8.3.
+    net.enqueue(
+        EapolFrame {
+            version: EapolVersion::V3,
+            packet_type: EapolPacketType::EapPacket,
+            body: vec![0x01, 0x00, 0x00, 0x05, 0x01],
+        }
+        .encode()
+        .unwrap(),
+    );
     let mut supp = Supplicant::with_eap_methods(config, net, Vec::new()).unwrap();
 
-    // Before stepping, the PAE is Disconnected.
+    // Since the auto-authentication change (#170 / F-INT-1) the PAE
+    // boots straight into Connecting when the link is up — the JSON
+    // must record the live state, not a hardcoded default.
     let json_before = serde_json::to_string(&supp.state()).unwrap();
     assert!(
-        json_before.contains(r#""pae_state":"disconnected""#),
-        "expected disconnected in {}",
+        json_before.contains(r#""pae_state":"connecting""#),
+        "expected connecting in {}",
         json_before
     );
 
-    // Drive PAE: Disconnected -> Connecting via tick() per INT-003.
-    supp.pae_set_authenticate(true);
+    // Drive the PAE: the queued EAP-Request/Identity advances
+    // Connecting -> Authenticating per Cl.8.3 / INT-003.
     supp.tick().unwrap();
 
     let json_after = serde_json::to_string(&supp.state()).unwrap();
     assert!(
-        json_after.contains(r#""pae_state":"connecting""#),
-        "expected connecting in {}",
+        json_after.contains(r#""pae_state":"authenticating""#),
+        "expected authenticating in {}",
         json_after
     );
 }

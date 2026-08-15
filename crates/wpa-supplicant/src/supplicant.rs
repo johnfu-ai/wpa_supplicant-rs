@@ -249,7 +249,21 @@ impl<N: NetworkIo + 'static> Supplicant<N> {
         let link_up = network.link_up();
         let identity = config.eap.identity.as_bytes().to_vec();
         let adapter = SupplicantPaeAdapter::new(Arc::clone(&network), identity.clone());
-        let pae = SupplicantPae::new(adapter);
+        let mut pae = SupplicantPae::new(adapter);
+        // #187 (REQ-F-PAE-001; found during the F-INT-1 / #170 live
+        // FreeRADIUS run): the daemon acts as the PAE client (Logon
+        // Process role) of Cl.8.4 — a supplicant exists to
+        // authenticate the port, so `authenticate` is set
+        // unconditionally at construction. When the link is already
+        // up at boot, nudge the PAE into Connecting immediately so
+        // EAPOL-Start (Cl.8.3) is on the wire without waiting for an
+        // external control command (the daemon previously idled in
+        // Disconnected forever).
+        pae.set_authenticate(true);
+        if link_up {
+            pae.link_changed(true)
+                .map_err(|e| anyhow::anyhow!("boot link-up notification failed: {e}"))?;
+        }
         let eap = EapSession::new(Arc::clone(&network), identity, methods, tls_config);
         Ok(Self {
             config,

@@ -74,10 +74,12 @@ ca = "/etc/certs/ca.pem"
 /// Verifies: INT-003 (#111)
 /// Per IEEE 802.1X-2020 Clause 8.3.
 ///
-/// After `pae_set_authenticate(true)`, a single `tick()` call must
-/// advance the Supplicant PAE from Disconnected to Connecting and
-/// emit an EAPOL-Start on the network. Pre-INT-003, callers had to
-/// invoke `pae_step()` directly; INT-003 makes the tick loop do that.
+/// Since #170 / F-INT-1 (REQ-F-PAE-001) the daemon auto-starts
+/// authentication at construction when the link is up: the PAE boots
+/// straight into Connecting and puts EAPOL-Start on the wire before
+/// any tick. The tick loop (INT-003) must keep the PAE advancing
+/// without re-emitting EAPOL-Start — callers never invoke the PAE
+/// step by hand.
 #[test]
 fn test_tick_advances_pae_to_connecting_and_emits_eapol_start() {
     let config = make_config();
@@ -85,26 +87,38 @@ fn test_tick_advances_pae_to_connecting_and_emits_eapol_start() {
     let mut supp =
         Supplicant::with_eap_methods(config, std::sync::Arc::clone(&net), Vec::new()).unwrap();
 
-    assert_eq!(supp.pae_state(), PaeState::Disconnected);
-
-    supp.pae_set_authenticate(true);
-    supp.tick().unwrap();
-
     assert_eq!(
         supp.pae_state(),
         PaeState::Connecting,
-        "tick() must drive pae.step() — PAE should advance to Connecting per Cl.8.3"
+        "construction must auto-start authentication (Cl.8.4) when the link is up"
     );
 
-    let starts: Vec<_> = net
+    let starts_before: Vec<_> = net
         .sent_frames()
         .into_iter()
         .filter(|(_, body)| body.get(1) == Some(&EapolPacketType::EapolStart.as_u8()))
         .collect();
     assert_eq!(
-        starts.len(),
+        starts_before.len(),
         1,
-        "tick() must send exactly one EAPOL-Start when authenticate is set"
+        "exactly one EAPOL-Start must be on the wire from the auto-start boot path"
+    );
+
+    supp.tick().unwrap();
+
+    assert_eq!(
+        supp.pae_state(),
+        PaeState::Connecting,
+        "tick() must drive pae.step() and hold the Connecting state per Cl.8.3"
+    );
+    let starts_after = net
+        .sent_frames()
+        .iter()
+        .filter(|(_, body)| body.get(1) == Some(&EapolPacketType::EapolStart.as_u8()))
+        .count();
+    assert_eq!(
+        starts_after, 1,
+        "a tick after boot must not re-emit EAPOL-Start (startWhen timer governs retry)"
     );
 }
 
@@ -121,7 +135,8 @@ fn test_tick_does_not_double_emit_eapol_start() {
     let mut supp =
         Supplicant::with_eap_methods(config, std::sync::Arc::clone(&net), Vec::new()).unwrap();
 
-    supp.pae_set_authenticate(true);
+    // No manual `pae_set_authenticate` shim: since #187 the boot path
+    // itself starts authentication when the link is up.
     for _ in 0..5 {
         supp.tick().unwrap();
     }
@@ -140,20 +155,22 @@ fn test_tick_does_not_double_emit_eapol_start() {
 /// Verifies: INT-003 (#111)
 /// Per ADR-EVT-007 (#79).
 ///
-/// `tick()` returns `Ok` and an event vector even when the PAE rejects
-/// a step (e.g. inconsistent flags). The current `SupplicantPae::step`
-/// is total over its inputs, but the event loop must remain robust.
+/// `tick()` returns `Ok` and an empty event vector on a quiet PAE.
+/// Since #170 / F-INT-1 the PAE has already auto-started (Connecting,
+/// EAPOL-Start sent) at construction when the link is up; a tick with
+/// no inbound frames and no link change must produce no events and
+/// leave that state untouched.
 #[test]
 fn test_tick_returns_ok_on_quiet_supplicant() {
     let config = make_config();
     let net = TestNet::new();
     let mut supp = Supplicant::with_eap_methods(config, net, Vec::new()).unwrap();
 
-    // No authenticate flag, no inbound frames, no link change.
+    // No inbound frames, no link change — the boot already fired.
     let events = supp.tick().unwrap();
     assert!(
         events.is_empty(),
         "no events should be produced on a quiet tick"
     );
-    assert_eq!(supp.pae_state(), PaeState::Disconnected);
+    assert_eq!(supp.pae_state(), PaeState::Connecting);
 }
