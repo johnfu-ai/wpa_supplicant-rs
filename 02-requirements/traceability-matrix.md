@@ -158,7 +158,7 @@ Previous editions: 2026-06-06 (Phase 05 implementation refresh per `docs/TODO.md
 | REQ | Issue | Closing Commit | Code / Evidence | Gates | Status |
 |---|---|---|---|---|---|
 | REQ-NF-PORT-001 Linux x86_64 + ARM64 | #60 | `f1ad186` | `.github/workflows/ci.yml` `build-aarch64` job cross-compiles every library + binary | CI gate | Implemented |
-| REQ-NF-PORT-002 `no_std` Capability | #61 | `89991dd` | `crates/pae` builds `--no-default-features` and `--no-default-features --features macsec`; `Error` type avoids `thiserror` under `no_std` | CI gate (recommended addition) | Implemented |
+| REQ-NF-PORT-002 `no_std` Capability | #61 | `89991dd` | `crates/pae` builds `--no-default-features` and `--no-default-features --features macsec`; `Error` type avoids `thiserror` under `no_std` | CI `No-std (pae)` job (#142 / TEST-VV-004, landed 2026-08-15) — a stray `use std::…` in `pae` now fails CI | Implemented |
 
 ### REQ-NF (Maintainability — Governance via tooling)
 

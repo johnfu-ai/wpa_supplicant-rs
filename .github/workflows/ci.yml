@@ -74,6 +74,25 @@ jobs:
       - name: Build (binary crate)
         run: cargo build -p wpa-supplicant --target aarch64-unknown-linux-gnu
 
+  no-std:
+    # Implements: docs/TODO.md P3.2 / issue #142 (TEST-VV-004).
+    # Verifies: REQ-NF-PORT-002 (#61) — the `pae` crate keeps building
+    # without `std`. A single accidental `use std::…` in a pae source
+    # file would slip through `cargo test --workspace` (default
+    # features enable `std`); this gate catches it. Negative-tested
+    # locally: injecting `use std::collections::HashMap` into
+    # crates/pae/src/mka.rs fails this exact build step.
+    name: No-std (pae)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build pae without default features (no_std)
+        run: cargo build -p pae --no-default-features
+      - name: Build pae no_std + macsec
+        run: cargo build -p pae --no-default-features --features macsec
+
   supply-chain:
     # Implements: docs/TODO.md P5.2 / issue #140 (TEST-VV-002).
     # Verifies: REQ-NF-SEC-001/002/003/005 supply-chain posture.
