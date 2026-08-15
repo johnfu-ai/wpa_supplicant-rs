@@ -233,6 +233,19 @@ impl EapPacket {
         let identifier = raw[1];
         let length = u16::from_be_bytes([raw[2], raw[3]]) as usize;
 
+        // Per RFC 3748 Section 4: Length counts the whole packet,
+        // header included — it can never be smaller than the header
+        // itself. Without this check a Success/Failure packet with a
+        // Length field < 4 panics slicing `raw[HEADER_SIZE..length]`
+        // (#143 / TEST-VV-005 fuzz finding; REQ-NF-REL-001).
+        if length < Self::HEADER_SIZE {
+            return Err(super::EapError::InvalidPacket(format!(
+                "EAP packet length field ({}) is smaller than the {}-byte header",
+                length,
+                Self::HEADER_SIZE
+            )));
+        }
+
         if length > Self::MAX_SIZE {
             return Err(super::EapError::InvalidPacket(format!(
                 "EAP packet length ({}) exceeds maximum ({})",
@@ -859,6 +872,35 @@ mod tests {
         let raw = [4u8, 7, 0, 4];
         let packet = EapPacket::decode(&raw).unwrap();
         assert_eq!(packet.code(), EapCode::Failure);
+    }
+
+    /// Verifies: #38 (REQ-F-EAP-001), #143 / TEST-VV-005
+    /// (REQ-NF-REL-001 no-panic guarantee).
+    /// Per RFC 3748 Section 4: the Length field must be >= 4 (the
+    /// header itself). A Length field below 4 must be rejected as
+    /// `InvalidPacket`, not panic. Regression test for the crash found
+    /// by the `fuzz_eap_packet_decode` harness (crash artifact
+    /// `03 00 00 00`: EAP-Success header whose Length field is 0 —
+    /// previously panicked slicing `raw[4..0]`).
+    #[test]
+    fn test_eap_packet_length_field_below_header_rejected() {
+        // Length = 0 on a Success packet (the fuzzer-found crash).
+        let result = EapPacket::decode(&[3u8, 0, 0, 0]);
+        assert!(
+            result.is_err(),
+            "Length field 0 must be rejected, not panic"
+        );
+        // Length = 1..3 across all codes.
+        for length in [0u8, 1, 2, 3] {
+            for code in [1u8, 2, 3, 4] {
+                let raw = [code, 9, 0, length];
+                let result = EapPacket::decode(&raw);
+                assert!(
+                    result.is_err(),
+                    "Length {length} on code {code} must be rejected"
+                );
+            }
+        }
     }
 
     /// Verifies: #38 (REQ-F-EAP-001)

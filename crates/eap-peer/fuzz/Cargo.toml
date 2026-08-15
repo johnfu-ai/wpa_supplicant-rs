@@ -1,0 +1,25 @@
+[package]
+name = "eap-peer-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+# Per #143 / TEST-VV-005: standalone cargo-fuzz crate, detached from
+# the workspace (empty [workspace] below + root `exclude`).
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+eap-peer = { path = ".." }
+
+# Detach from the root workspace — the fuzz harness is built with
+# nightly + libFuzzer, not the stable workspace toolchain.
+[workspace]
+
+[[bin]]
+name = "fuzz_eap_packet_decode"
+path = "fuzz_targets/fuzz_eap_packet_decode.rs"
+test = false
+doc = false
+bench = false

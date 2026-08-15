@@ -19,3 +19,8 @@ Thumbs.db
 .claude/
 .mcp.json
 __pycache__/
+
+# cargo-fuzz artifacts (#143 / TEST-VV-005) — corpora are regenerable;
+# committed corpora would bloat the repo.
+crates/*/fuzz/corpus/
+crates/*/fuzz/artifacts/
