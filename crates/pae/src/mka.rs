@@ -394,8 +394,11 @@ impl Msk {
     }
 
     /// Key bytes as a slice (for KDF operations only).
-    #[allow(dead_code)]
-    pub(crate) fn as_bytes(&self) -> &[u8] {
+    ///
+    /// Public per #179: the EAP method layer needs to cross-check the
+    /// exported MSK against the RFC 5216 §2.3 reference derivation.
+    /// `Debug` remains redacted.
+    pub fn as_bytes(&self) -> &[u8] {
         &self.key
     }
 }
