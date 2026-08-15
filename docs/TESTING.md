@@ -57,6 +57,7 @@ so its lines are not instrumented). All crates clear the 80% floor with
 | Clippy (incl. `unwrap_used` / `expect_used`) | `Test (x86_64)` → `cargo clippy --workspace --all-features --all-targets -- -D warnings` | REQ-NF-SEC-002 / #144 |
 | Tests | `Test (x86_64)` → `cargo test --workspace` | — |
 | Cross-build aarch64 | `Cross-build (aarch64)` | REQ-NF-PORT-001 |
+| `no_std` build | `No-std (pae)` → `cargo build -p pae --no-default-features` (+ `--features macsec`) | REQ-NF-PORT-002 / #142 |
 | Supply chain | `Supply-chain` → `cargo audit` + `cargo deny` | REQ-NF-SEC-003/005 / #140 |
 | `unsafe` discipline | `Unsafe discipline` → `scripts/check_unsafe_safety.py` + `cargo geiger` | REQ-NF-SEC-001 / #141 |
 | Coverage | `Coverage` → `scripts/check_coverage.py` | REQ-NF-MNT-001 / #139 |
