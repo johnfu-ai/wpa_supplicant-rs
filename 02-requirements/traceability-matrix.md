@@ -149,8 +149,8 @@ Previous editions: 2026-06-06 (Phase 05 implementation refresh per `docs/TODO.md
 
 | REQ | Issue | Closing Commit | Code / Evidence | Tests | Status |
 |---|---|---|---|---|---|
-| REQ-NF-REL-001 No Panics in Library Crates | #57 | (governance) | Library crates return `Result<T,E>` throughout; no `panic!` in `pae`, `eapol-supp`, `eap-peer`, `logon` library paths | covered by full unit suite + fuzz (Phase 07) | Implemented |
-| REQ-NF-REL-002 Graceful Error Propagation | #58 | (governance) | `Result` plumbed through all state machine APIs (`SupplicantPae`, `MkaParticipant`, `CpStateMachine`, `LogonProcess`, `EapPeer`) | covered by error-path tests across crates | Implemented |
+| REQ-NF-REL-001 No Panics in Library Crates | #57 | (governance) | Library crates return `Result<T,E>` throughout; no `panic!` in `pae`, `eapol-supp`, `eap-peer`, `logon` library paths | full unit suite + `cargo-fuzz` CI job `Fuzz decoders` (#143 / TEST-VV-005, landed 2026-08-15; found + fixed a Length-field<4 panic in `EapPacket::decode`) | Implemented |
+| REQ-NF-REL-002 Graceful Error Propagation | #58 | (governance) | `Result` plumbed through all state machine APIs (`SupplicantPae`, `MkaParticipant`, `CpStateMachine`, `LogonProcess`, `EapPeer`) | error-path tests across crates + fuzz targets assert malformed input → `Err` (#143 / TEST-VV-005) | Implemented |
 | REQ-NF-REL-003 Reconnection After Link Flap | #59 | `38e5992` | `crates/wpa-supplicant/src/supplicant.rs` reconnection logic | 5 dedicated tests in `supplicant.rs` | Implemented |
 
 ### REQ-NF (Portability)
@@ -242,7 +242,7 @@ Previous editions: 2026-06-06 (Phase 05 implementation refresh per `docs/TODO.md
 | CI `cargo audit` / `cargo deny` gates | Closed | Supply-chain CI gate landed: `supply-chain` job in `.github/workflows/ci.yml` runs `cargo audit --deny warnings` + `cargo deny --all-features check`. Policy at `deny.toml`. Public summary at `docs/SECURITY.md`. | (closed) | #140 (TEST-VV-002), `docs/TODO.md` P5.2 |
 | CI `cargo geiger` gate for REQ-NF-SEC-001 | Closed | `unsafe-discipline` CI job runs `scripts/check_unsafe_safety.py` (allowlist + `// SAFETY:` adjacency hard gate) + `cargo geiger` totals (informational) | (closed) | #141 (TEST-VV-003) |
 | CI `no_std` build gate for REQ-NF-PORT-002 | Low | `pae --no-default-features` builds locally; no CI step | Add to `.github/workflows/ci.yml` | #142 (TEST-VV-004) |
-| Fuzz harness for REQ-NF-REL-001/002 | Medium | Three decoders (`EapolFrame`, `EapPacket`, `Mkpdu`) have no fuzz coverage | Add `cargo fuzz` targets | #143 (TEST-VV-005) |
+| Fuzz harness for REQ-NF-REL-001/002 | Closed | ~~Three decoders have no fuzz coverage~~ | `cargo fuzz` targets landed under `crates/{pae,eapol-supp,eap-peer}/fuzz/` + CI `Fuzz decoders` job (1 min/target) — found + fixed `EapPacket::decode` Length<4 panic (#143, 2026-08-15) | #143 (TEST-VV-005) |
 | `clippy::unwrap_used` not enabled | Closed | `clippy::unwrap_used` + `clippy::expect_used` enabled at `warn` in every crate root; CI `--all-features --all-targets -D warnings` enforces; 3 prior `Mutex::lock().unwrap()` residuals eliminated, `main.rs` fatal-init `.expect()` allow-listed | (closed) | #144 (TEST-VV-006) |
 | Security review of recent feature batch | Medium | `/security-review` overdue for #37, #50, #51, #59, #68–#72, #86 | Run `SKILL/prompts/security-review.prompt.md` | `docs/TODO.md` P5.1 |
 

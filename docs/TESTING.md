@@ -58,6 +58,7 @@ so its lines are not instrumented). All crates clear the 80% floor with
 | Tests | `Test (x86_64)` → `cargo test --workspace` | — |
 | Cross-build aarch64 | `Cross-build (aarch64)` | REQ-NF-PORT-001 |
 | `no_std` build | `No-std (pae)` → `cargo build -p pae --no-default-features` (+ `--features macsec`) | REQ-NF-PORT-002 / #142 |
+| Fuzz decoders | `Fuzz decoders` → `cargo fuzz run` 1 min/target on `EapolFrame::decode`, `EapPacket::decode`, `Mkpdu::decode` (nightly + libFuzzer) | REQ-NF-REL-001/002 / #143 |
 | Supply chain | `Supply-chain` → `cargo audit` + `cargo deny` | REQ-NF-SEC-003/005 / #140 |
 | `unsafe` discipline | `Unsafe discipline` → `scripts/check_unsafe_safety.py` + `cargo geiger` | REQ-NF-SEC-001 / #141 |
 | Coverage | `Coverage` → `scripts/check_coverage.py` | REQ-NF-MNT-001 / #139 |

@@ -7,6 +7,13 @@ members = [
     "crates/logon",
     "crates/wpa-supplicant",
 ]
+# Standalone cargo-fuzz harnesses (#143 / TEST-VV-005): nightly +
+# libFuzzer crates, deliberately outside the stable workspace.
+exclude = [
+    "crates/pae/fuzz",
+    "crates/eapol-supp/fuzz",
+    "crates/eap-peer/fuzz",
+]
 
 [workspace.package]
 version = "0.1.0"

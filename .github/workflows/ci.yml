@@ -93,6 +93,39 @@ jobs:
       - name: Build pae no_std + macsec
         run: cargo build -p pae --no-default-features --features macsec
 
+  fuzz:
+    # Implements: docs/TODO.md P3.2 / issue #143 (TEST-VV-005).
+    # Verifies: REQ-NF-REL-001 (#57) no panics in library crates /
+    # REQ-NF-REL-002 (#58) graceful error propagation — the three
+    # decoders that parse adversary-controlled bytes (EAPOL frame,
+    # EAP packet, MKPDU) must never panic on malformed input.
+    # Found + fixed one crash on landing: a Success/Failure packet
+    # whose Length field < 4 panicked `EapPacket::decode` (regression
+    # test `test_eap_packet_length_field_below_header_rejected`).
+    name: Fuzz decoders (1 min/target)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            .
+            crates/pae/fuzz
+            crates/eapol-supp/fuzz
+            crates/eap-peer/fuzz
+      - name: Install cargo-fuzz
+        run: cargo install --locked cargo-fuzz
+      - name: Fuzz Mkpdu::decode
+        run: cargo fuzz run fuzz_mkpdu_decode -- -max_total_time=60
+        working-directory: crates/pae
+      - name: Fuzz EapolFrame::decode
+        run: cargo fuzz run fuzz_eapol_frame_decode -- -max_total_time=60
+        working-directory: crates/eapol-supp
+      - name: Fuzz EapPacket::decode
+        run: cargo fuzz run fuzz_eap_packet_decode -- -max_total_time=60
+        working-directory: crates/eap-peer
+
   supply-chain:
     # Implements: docs/TODO.md P5.2 / issue #140 (TEST-VV-002).
     # Verifies: REQ-NF-SEC-001/002/003/005 supply-chain posture.
